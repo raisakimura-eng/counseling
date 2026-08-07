@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カウンセリング監査ダッシュボード（8項目チェック・8/1〜8/6）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Hiragino Sans', 'Meiryo', Arial, sans-serif; background: #f4f5f0; color: #0a0a0a; }
+header { background: #3d3d3b; color: #f4f5f0; padding: 22px 32px; }
+header h1 { font-size: 1.3rem; font-weight: 700; }
+header p { font-size: 0.85rem; opacity: 0.75; margin-top: 4px; }
+main { padding: 24px 32px 60px; max-width: 1320px; margin: 0 auto; }
+
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+.kpi-card { background: white; border-radius: 10px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.kpi-card .label { font-size: 0.78rem; color: #718096; margin-bottom: 6px; }
+.kpi-card .value { font-size: 1.6rem; font-weight: 700; color: #52652a; }
+.kpi-card .sub { font-size: 0.72rem; color: #a0aec0; margin-top: 4px; }
+
+.section { background: white; border-radius: 10px; padding: 22px 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.section h2 { font-size: 1.02rem; margin-bottom: 4px; color: #3d3d3b; }
+.section .desc { font-size: 0.78rem; color: #718096; margin-bottom: 16px; }
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.chart-box { position: relative; height: 300px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #edf2f7; }
+th { background: #f7fafc; color: #4a5568; font-weight: 600; position: sticky; top: 0; }
+tr:hover { background: #f7fafc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
+.badge.good { background: #e9ede6; color: #52652a; }
+.badge.mid { background: #f5ecd8; color: #8a6d1f; }
+.badge.bad { background: #f3e0dc; color: #9c4a3a; }
+
+.filter-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+.filter-row select { padding: 6px 10px; border-radius: 6px; border: 1px solid #cbd5e0; font-size: 0.82rem; }
+
+.note-box { background: #f4f0e4; border: 1px solid #cbbf9a; border-radius: 8px; padding: 14px 16px; font-size: 0.82rem; color: #6b5a2e; line-height: 1.6; }
+
+.table-wrap { max-height: 480px; overflow-y: auto; }
+
+.legend-item { font-size: 0.75rem; color: #718096; margin-top: 8px; }
+
+/* Matrix / heatmap */
+.matrix-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: fixed; }
+.matrix-table th, .matrix-table td { text-align: center; padding: 10px 6px; border: 1px solid #edf2f7; }
+.matrix-table th.rowhead, .matrix-table td.rowhead { text-align: left; font-weight: 700; color: #3d3d3b; background: #f4f5f0; }
+.heat-cell { border-radius: 6px; padding: 8px 4px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
+.heat-cell:hover { transform: scale(1.05); }
+.heat-cell .rate { font-size: 0.95rem; }
+.heat-cell .count { font-size: 0.65rem; opacity: 0.75; display: block; margin-top: 2px; }
+.heat-empty { color: #cbd5e0; font-size: 0.75rem; }
+
+.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.tab-btn { padding: 7px 16px; border-radius: 20px; border: 1px solid #cbd5e0; background: white; cursor: pointer; font-size: 0.82rem; color: #4a5568; }
+.tab-btn.active { background: #78875a; color: white; border-color: #78875a; }
+
+.drill-panel { display: none; margin-top: 18px; padding-top: 16px; border-top: 1px dashed #e2e8f0; }
+.drill-panel.active { display: block; }
+.drill-title { font-size: 0.9rem; font-weight: 700; color: #3d3d3b; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>カウンセリング監査ダッシュボード（8項目チェック）</h1>
+  <p>対象期間：8月1日〜8月6日／全 56 セッション（工藤・笹山・大坪）</p>
+</header>
+<main>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">総セッション数</div>
+      <div class="value">56 件</div>
+      <div class="sub">8/1〜8/6</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">平均スコア</div>
+      <div class="value">5.86 / 8</div>
+      <div class="sub">達成率 73.2%</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">最弱項目</div>
+      <div class="value">③ニーズ確認</div>
+      <div class="sub">平均 36.6%（コスト/DT/効果の優先度確認）</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">最強項目</div>
+      <div class="value">②ヒアリング</div>
+      <div class="sub">平均 99.1%</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>カウンセラー別 × 日別 達成率マトリクス</h2>
+    <div class="desc">セルをクリックすると、その担当者・日の8項目レーダーとセッション一覧を下に表示します。緑＝達成率高、黄＝中、赤＝低。空欄はその日の担当なし。</div>
+    <div style="overflow-x:auto;">
+      <table class="matrix-table" id="matrixTable"></table>
+    </div>
+    <div class="legend-item">凡例：<span style="color:#52652a;">■</span> 75%以上　<span style="color:#8a6d1f;">■</span> 55〜75%　<span style="color:#9c4a3a;">■</span> 55%未満</div>
+
+    <div class="drill-panel" id="drillPanel">
+      <div class="drill-title" id="drillTitle"></div>
+      <div class="chart-grid">
+        <div class="chart-box" style="height:260px;"><canvas id="drillRadar"></canvas></div>
+        <div>
+          <table id="drillTable">
+            <thead><tr><th>セッション</th><th>合計</th><th>達成率</th><th>備考</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>顧客VOC（患者アンケート）× 内部監査 日別比較</h2>
+    <div class="desc">患者アンケートの「カウンセリングの質」設問（5段階）を日別に集計し、内部の8項目チェック監査の達成率と並べたもの。VOCはカウンセラー・医師どちらの対応も含む患者側の主観評価、内部監査は文字起こしに基づく客観チェックであり、両者は評価軸が異なる点に留意。</div>
+    <div class="chart-box" style="height:320px;"><canvas id="vocChart"></canvas></div>
+    <div class="table-wrap" style="max-height:220px; margin-top:14px;">
+      <table>
+        <thead><tr><th>日付</th><th>VOC回答件数</th><th>VOC平均スコア(5点満点)</th><th>VOC満足度(%)</th><th>内部監査達成率(%)</th><th>差分</th></tr></thead>
+        <tbody id="vocTableBody"></tbody>
+      </table>
+    </div>
+    <div class="legend-item">※VOCは来院者アンケートの任意回答であり、必ずしも当日の内部監査対象セッションと同一の患者ではない点に注意。件数が少ない日（8/4, 8/6等）は平均が振れやすい。</div>
+  </div>
+
+  <div class="section">
+    <h2>担当者別 達成率／日別トレンド</h2>
+    <div class="chart-grid">
+      <div class="chart-box"><canvas id="counselorChart"></canvas></div>
+      <div class="chart-box"><canvas id="dateChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>項目別 平均スコア（全担当者）</h2>
+    <div class="desc">1=実施 / 0.5=部分的に実施 / 0=未実施。⑦コース促しは方針上「低い方が望ましい」評価軸。</div>
+    <div class="chart-box" style="height:340px;"><canvas id="itemChart"></canvas></div>
+    <div class="legend-item">※⑦コース促しは「1=単品→コース誘導あり」という意味であり、無理なアップセルをしないという方針上は低スコアが望ましい点に注意。他の項目は高いほど良好。</div>
+  </div>
+
+  <div class="section">
+    <h2>担当者別 × 項目別 詳細（レーダー）</h2>
+    <div class="chart-box" style="height:360px;"><canvas id="radarChart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <h2>セッション一覧（全56件）</h2>
+    <div class="filter-row">
+      <select id="filterDate"><option value="">日付：すべて</option></select>
+      <select id="filterCounselor"><option value="">担当者：すべて</option></select>
+    </div>
+    <div class="table-wrap">
+      <table id="sessionTable">
+        <thead>
+          <tr>
+            <th>日付</th><th>担当</th><th>セッション</th><th>合計</th><th>達成率</th><th>備考</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="note-box">
+    <strong>総括メモ：</strong> 6日間・56件を通して「③ニーズ確認（コスト/ダウンタイム/効果のどれを重視するか）」が最も一貫して弱い項目でした（平均36.6%）。逆に「①挨拶」「②ヒアリング」「⑤提案内容の説明」「⑥同意確認」は概ね高水準で定着しています。「⑦コース促し」「⑧次回予約」は担当者・案件によりばらつきが大きく、特に「⑦コース促し」が強い誘導になっている回はクリニック方針（無理なアップセルをしない）との整合性を個別に確認する価値があります。判定はすべて文字起こしテキストのみに基づく一次評価であり、料金表・カルテ等との突合は別途推奨します。
+  </div>
+
+</main>
+<script>
+const DATA = {"sessions": [{"date": "8月1日", "counselor": "大坪", "label": "①インモードFX(石川様)", "scores": [1, 1, 0, 0, 1, 0.5, 1, 1], "total": 5.5, "note": "患者の悩みは聞けているが、ニーズの優先軸確認と医師の複数施術提案が弱い。"}, {"date": "8月1日", "counselor": "大坪", "label": "②筋ボトックス/ニキビ跡(オースミ様)", "scores": [1, 1, 0, 1, 0.5, 0.5, 1, 0.5], "total": 5.5, "note": "ヒアリングと医師の複数提案は良好だが、ニーズ確認と具体的な次回予約確認が不足。"}, {"date": "8月1日", "counselor": "大坪", "label": "③ポテンツァ/アクアピール(お松様)", "scores": [0.5, 1, 0, 0, 1, 0.5, 1, 0.5], "total": 4.5, "note": "リピーター対応で流れは良いが、新規提案・ニーズ確認要素が乏しい。"}, {"date": "8月1日", "counselor": "大坪", "label": "④リジュラン(継続来院)", "scores": [0.5, 1, 1, 1, 1, 1, 0.5, 0], "total": 6, "note": "ニーズ確認・複数施術提案・同意確認が揃った好例だが、次回予約の確認が抜けている。"}, {"date": "8月1日", "counselor": "大坪", "label": "⑤温熱リフト(治療計画相談)", "scores": [0.5, 1, 0, 1, 1, 1, 0, 0.5], "total": 5, "note": "医師の複数提案と同意確認は良好。ニーズ確認とコース誘導は見られなかった（後者は方針上望ましい可能性）。"}, {"date": "8月1日", "counselor": "大坪", "label": "⑥フォーマ/ナルフォックス", "scores": [0.5, 1, 1, 1, 1, 1, 1, 1], "total": 7.5, "note": "8項目のうち7項目を良好に実施。質は高いが、コース誘導が積極的な点は方針上留意点。"}, {"date": "8月1日", "counselor": "大坪", "label": "⑦リジュラン痛み軽減(ワダミラノ様)", "scores": [1, 1, 0, 0.5, 1, 1, 1, 1], "total": 6.5, "note": "痛みへの心理的ケアが手厚いが、複数施術の組み合わせ提案とニーズ優先軸の確認はやや弱い。"}, {"date": "8月1日", "counselor": "大坪", "label": "⑧リジュラン/ボトックス(継続来院)", "scores": [0.5, 1, 0.5, 1, 1, 0.5, 0.5, 1], "total": 6, "note": "医師の提案の幅と説明の丁寧さは高評価だが、同意確認とニーズ優先軸の明確化に改善余地。"}, {"date": "8月1日", "counselor": "大坪", "label": "⑨ニキビ治療初診相談", "scores": [0.5, 1, 1, 1, 1, 1, 0.5, 1], "total": 7, "note": "初診対応として非常にバランスが良く、ニーズ確認・複数提案・同意確認が全て実施されている。"}, {"date": "8月1日", "counselor": "工藤", "label": "①ザーフ施術(顔全体引き締め・ショット数検討)", "scores": [0, 1, 0, 0, 1, 1, 0, 0.5], "total": 3.5, "note": "医師の診断根拠説明・柔軟な予算調整は良好。挨拶部分は文字起こし範囲外、ニーズ優先度の明確な確認・複数施術提案・次回予約確定はなし。コース誘導なし。"}, {"date": "8月1日", "counselor": "笹山", "label": "①イーモード/ウォンダー(大竹様)", "scores": [1, 1, 0.5, 1, 1, 1, 0.5, 0.5], "total": 6.5, "note": "説明は丁寧だが、ニーズの明確化と次回予約確定がやや弱い。"}, {"date": "8月1日", "counselor": "笹山", "label": "②インモード(カナミタマ様)", "scores": [1, 1, 0, 1, 1, 1, 0, 0.5], "total": 5.5, "note": "医師が丁寧に代替案を提示し方針転換を促した好例だが、ニーズ確認とコース以外の誘導が薄い。"}, {"date": "8月1日", "counselor": "笹山", "label": "③イーモード(ナガシマ様)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 0], "total": 6.5, "note": "提案・説明は充実しているが、次回予約確認が抜けている。"}, {"date": "8月1日", "counselor": "笹山", "label": "④ゴールドPTT問診(クワト様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 0.5], "total": 6, "note": "ゴールドPTTを安全のため見送り別施術を提案する誠実な対応。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑤ボトックス/ザーフ/ジュベレック(クマダ様)", "scores": [1, 1, 1, 1, 1, 1, 0.5, 0.5], "total": 7, "note": "患者の抵抗感に寄り添いながら医師が丁寧に複数案を比較検討した好例。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑥リシュラン(クリーハラ様)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 0.5], "total": 7, "note": "複数施術の違いを非常に丁寧に説明し、明確なコース誘導も見られた。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑦ボトックス/脱毛/トーニング(エンドウ様)", "scores": [1, 1, 0, 0.5, 0.5, 1, 0, 0], "total": 4, "note": "既存メニューの継続中心で、複数施術の組み合わせ提案や次回予約フォローが弱い。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑧脱毛/LDM/ヒアルロン酸(ニシカワ様)", "scores": [1, 1, 0, 1, 1, 1, 0, 1], "total": 6, "note": "次回予約が明確に確定している点は良好。ニーズの優先順位確認は不足。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑨肩ボトックス/アクアピール(モロタマ様)", "scores": [1, 1, 0, 0, 0.5, 1, 0.5, 0], "total": 4, "note": "リピーター施術の継続中心で、新規提案・次回予約フォローが弱い。"}, {"date": "8月1日", "counselor": "笹山", "label": "⑩音波リフト/ピーリング(タカハシ様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 0], "total": 5.5, "note": "施術選択肢の説明は丁寧だが、次回予約への誘導が見られない。"}, {"date": "8月2日", "counselor": "大坪", "label": "①Ondaリフト(きむや様)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 1], "total": 7.5, "note": "挨拶・ヒアリング・医師の複数施術提案・説明は十分だが、患者の重視ポイントを明示的に確認する質問がなかった点が惜しい。"}, {"date": "8月2日", "counselor": "大坪", "label": "②ピコトーニング継続(モリカワ様)", "scores": [1, 1, 0, 1, 1, 1, 1, 0.5], "total": 6.5, "note": "医師による複数アプローチ提案と丁寧な説明は良好だが、ニーズ確認が抜けており、コース誘導がかなり強い点が方針上気になる。"}, {"date": "8月2日", "counselor": "大坪", "label": "③ボトックスエラ/小鼻(イヌジュヒ様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 0.5], "total": 6, "note": "コース誘導がない点はクリニック方針に合致しているが、ニーズ確認と次回予約の具体的な確認がやや弱い。"}, {"date": "8月2日", "counselor": "大坪", "label": "④ワキボトックス(高松萌様)", "scores": [1, 1, 0.5, 0.5, 1, 1, 0, 0], "total": 5, "note": "コース誘導がない点は方針に合致するが、次回予約確認が全くなく、医師の提案も同一アプローチ内の部位追加にとどまる。"}, {"date": "8月2日", "counselor": "大坪", "label": "⑤リジュラン/サーモン注射(継続来院)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 0.5], "total": 7, "note": "医師による複数アプローチの比較説明が非常に丁寧で模範的だが、次回予約の具体的な確認がやや不足している。"}, {"date": "8月2日", "counselor": "工藤", "label": "①インモード/オムナリフト(タチカワ様)", "scores": [0.5, 1, 0.5, 0, 1, 1, 1, 1], "total": 6, "note": "施術説明の丁寧さと同意確認・次回予約誘導はしっかりできているが、患者の優先軸を言語化させる質問と医師による複数施術の組み合わせ提案がやや弱い。"}, {"date": "8月2日", "counselor": "工藤", "label": "②ポテンツァ(毛穴・ニキビ跡)", "scores": [0.5, 1, 0, 0, 1, 1, 1, 1], "total": 5.5, "note": "提案説明・同意確認・次回予約の誘導はできているが、ニーズ確認が欠落し、医師の複数施術提案もなく単一施術に終始。"}, {"date": "8月3日", "counselor": "工藤", "label": "①FX/ピンクグロウ", "scores": [0.5, 1, 0, 1, 0.5, 1, 0, 0], "total": 4, "note": "ヒアリングと会計前の内容確認はできているが、名乗りとニーズの重視点確認、次回予約の案内が弱い。"}, {"date": "8月3日", "counselor": "工藤", "label": "②ボトックス(リムサマ様)", "scores": [0.5, 1, 0, 1, 1, 1, 0, 0], "total": 4.5, "note": "医師の説明・選択肢提示は丁寧だが、担当者の名乗り、ニーズの優先軸確認、次回予約案内が抜けている。"}, {"date": "8月3日", "counselor": "工藤", "label": "③オムナリフト(ニシモト様)", "scores": [0.5, 1, 1, 0, 1, 1, 1, 1], "total": 6.5, "note": "ニーズ確認・提案説明・次回案内は充実。医師の提案が単一施術内の出力調整に留まり、複数回施術への誘導があった点は方針上留意。"}, {"date": "8月3日", "counselor": "笹山", "label": "①インモードFX(オヤシキレイナ様)", "scores": [1, 1, 0, 0.5, 1, 1, 0, 0.5], "total": 5, "note": "施術説明・同意確認は丁寧だが、ニーズの明確な優先軸確認とコース誘導・次回予約の具体化が弱い。"}, {"date": "8月3日", "counselor": "笹山", "label": "②ポテンザ(カミラ様)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 0], "total": 6.5, "note": "医師の複数提案と説明が充実しており模範的だが、次回予約の具体的確認が抜けている。"}, {"date": "8月3日", "counselor": "笹山", "label": "③ピンクグロウ/マサディピール(ヤギ様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 0], "total": 5.5, "note": "医師による組み合わせ提案・説明は良好だが、ニーズの優先軸確認と次回予約フォローが不足。"}, {"date": "8月3日", "counselor": "笹山", "label": "④ボトックス初回(チャン様)", "scores": [1, 0.5, 0, 1, 1, 1, 0.5, 0], "total": 5, "note": "医師が患者の誤解を丁寧に訂正し適切な施術に変更した点は評価できるが、カウンセラー段階のヒアリング・ニーズ確認・次回予約が弱い。"}, {"date": "8月3日", "counselor": "笹山", "label": "⑤ボトックス可否判定(長野在住)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 1], "total": 7.5, "note": "医師の複数提案・説明・次回予約まで非常に充実した対応。ただしニーズの優先軸を直接尋ねる場面はない。"}, {"date": "8月3日", "counselor": "笹山", "label": "⑥ボトックス眉間/目尻/エラ(中杉様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 0.5], "total": 6, "note": "医師による丁寧な選択肢比較が高評価。コース誘導がない点はクリニック方針的に望ましい。"}, {"date": "8月3日", "counselor": "笹山", "label": "⑦目の下クマ(インオクチ様)", "scores": [1, 1, 0, 1, 1, 1, 0, 0], "total": 5, "note": "医師の説明は的確で、コースを急がせない対応は方針に合致しているが、次回予約フォローが欠けている。"}, {"date": "8月3日", "counselor": "笹山", "label": "⑧初診毛穴/乾燥肌(ホリユウタ様)", "scores": [1, 1, 1, 1, 1, 1, 0.5, 1], "total": 7.5, "note": "ニーズ確認・複数提案・次回予約まで最も模範的な対応。コース誘導もクリニック方針に沿い抑制的だった。"}, {"date": "8月4日", "counselor": "笹山", "label": "①Vレーザー赤みモード(高橋様)", "scores": [1, 1, 0, 0, 0.5, 1, 1, 0.5], "total": 5, "note": "挨拶・ヒアリング・同意確認は良好だが、ニーズ優先度確認と医師による複数施術提案が弱く、単一施術中心の進行だった。"}, {"date": "8月4日", "counselor": "笹山", "label": "②インモード(水野様)", "scores": [1, 1, 0, 1, 1, 0.5, 0, 0.5], "total": 5, "note": "医師による複数施術・選択肢の説明は充実していたが、追加提案への同意確認とニーズの優先軸確認が不足していた。"}, {"date": "8月4日", "counselor": "笹山", "label": "③スキンボトックス(大橋様)", "scores": [1, 1, 0, 0.5, 1, 1, 0, 0], "total": 4.5, "note": "製剤説明や同意確認は丁寧だが、ニーズの優先軸確認・複数施術の組み合わせ提案・次回予約確認が弱い。"}, {"date": "8月4日", "counselor": "笹山", "label": "④ボトックス/水光/背中のシミ(95番)", "scores": [1, 1, 1, 1, 1, 1, 1, 0], "total": 7, "note": "ニーズ確認・複数施術提案・説明・同意確認が全て高水準で実施された好例。次回予約の具体的確認のみ欠けている。"}, {"date": "8月4日", "counselor": "笹山", "label": "⑤ボトックス眉間/エラ/小鼻(86番)", "scores": [1, 1, 0.5, 0.5, 1, 1, 0, 0.5], "total": 5.5, "note": "説明・同意確認は良好だが、ニーズ優先軸の明確化と次回予約の具体的確認が不十分。"}, {"date": "8月4日", "counselor": "笹山", "label": "⑥ララドクター/LDM/ポテンツァ(ミサワ様)", "scores": [1, 1, 1, 1, 1, 1, 0.5, 0.5], "total": 7, "note": "ニーズ確認・複数施術比較・説明・同意確認のバランスが良く高評価。コース促しと次回予約の具体性のみ弱い。"}, {"date": "8月4日", "counselor": "笹山", "label": "⑦ザーフ/LDM/アクアピール(タン様)", "scores": [1, 1, 0.5, 1, 1, 1, 0.5, 1], "total": 7, "note": "複数施術の組み合わせ提案と効果差の説明が充実し、次回予約への誘導も明確な好事例。ニーズ優先軸の確認はやや弱い。"}, {"date": "8月5日", "counselor": "大坪", "label": "①シミ・肝斑/トーニング(148番)", "scores": [1, 1, 0.5, 1, 1, 1, 1, 0.5], "total": 7, "note": "挨拶・ヒアリング・医師の複数提案・説明は充実しているが、ニーズ確認と次回予約の具体性がやや弱い。"}, {"date": "8月5日", "counselor": "大坪", "label": "②トーニング継続(141番)", "scores": [0.5, 1, 0, 1, 1, 1, 0.5, 1], "total": 6, "note": "リピーター向けの経過フォローとして医師の説明は丁寧で次回予約も明確だが、初回のニーズ確認要素が薄い。"}, {"date": "8月5日", "counselor": "大坪", "label": "③ニキビ治療FDM(145番)", "scores": [1, 1, 0.5, 1, 1, 1, 0.5, 0], "total": 6, "note": "医師が施術リスクを踏まえ複数の代替案を丁寧に説明した好例だが、次回予約の確認が欠けている。"}, {"date": "8月5日", "counselor": "大坪", "label": "④ブラックピール(吉岡様)", "scores": [1, 1, 1, 1, 1, 1, 0, 0.5], "total": 6.5, "note": "ニーズ確認・医師の提案説明が特に充実しており模範的だが、次回予約の具体的な確認が弱い。"}, {"date": "8月5日", "counselor": "大坪", "label": "⑤リジュラン/ジュベルック(156番)", "scores": [1, 1, 1, 1, 1, 1, 1, 0.5], "total": 7.5, "note": "ニーズ確認・医師の複数提案・説明が非常に充実しており8項目中最も高評価だが、コース促し（3回継続推奨）は方針上見直しの余地がある。"}, {"date": "8月5日", "counselor": "工藤", "label": "①オンダリフト(一川様)", "scores": [1, 1, 0, 0, 0.5, 0.5, 0.5, 1], "total": 4.5, "note": "ヒアリングと接客対応は丁寧だが、医師の提案が単一施術に留まり、ニーズの優先順位確認や複数提案の比較説明が不足している。"}, {"date": "8月5日", "counselor": "工藤", "label": "②インモード/タイタン比較(筒井様推定)", "scores": [0.5, 1, 0.5, 1, 1, 1, 0, 0], "total": 5, "note": "医師の複数施術比較説明は非常に充実。コース誘導が少ない点は方針に合致する一方、次回予約への誘導は行われていない。"}, {"date": "8月5日", "counselor": "工藤", "label": "③リジュラン手打ち/LDM(石川様推定)", "scores": [0.5, 1, 0, 1, 1, 1, 1, 0], "total": 5.5, "note": "医師の提案の幅と説明の具体性は高く同意確認も明確だが、コース誘導があり方針上注意が必要。次回予約への誘導もなし。"}, {"date": "8月6日", "counselor": "大坪", "label": "①トーニング/シミ・肝斑", "scores": [0.5, 1, 0, 1, 1, 1, 1, 0.5], "total": 6, "note": "ヒアリングと施術説明は丁寧だが、ニーズの重視軸を明確に聞く場面がなく、次回予約の具体的確定も弱い。"}, {"date": "8月6日", "counselor": "大坪", "label": "②ザーフ/ハイフ(曽我木様)", "scores": [1, 1, 0.5, 1, 1, 1, 0, 1], "total": 6.5, "note": "施術の違いの説明は非常に丁寧で医師の専門性も高い。コース誘導は見られず方針に沿っている。1ファイルに複数患者混在のため記録管理上の整理を推奨。"}, {"date": "8月6日", "counselor": "大坪", "label": "③鼻・唇フィラー相談", "scores": [0.5, 1, 0, 1, 1, 1, 0, 0.5], "total": 5, "note": "リスク説明は非常に丁寧だが、ニーズの重視軸確認と次回来院の明確な予約取得が弱い。コース誘導はなく方針に合致。"}], "overall": {"count": 56, "avg_total": 5.86, "avg_rate": 73.2}, "counselor": {"大坪": {"count": 22, "avg_total": 6.18, "avg_rate": 77.3, "item_avgs": [0.8, 1.0, 0.41, 0.86, 0.98, 0.91, 0.61, 0.61]}, "工藤": {"count": 9, "avg_total": 5.0, "avg_rate": 62.5, "item_avgs": [0.5, 1.0, 0.22, 0.44, 0.89, 0.94, 0.5, 0.5]}, "笹山": {"count": 25, "avg_total": 5.88, "avg_rate": 73.5, "item_avgs": [1.0, 0.98, 0.38, 0.84, 0.94, 0.98, 0.38, 0.38]}}, "date": {"8月1日": {"count": 20, "avg_total": 5.75, "avg_rate": 71.9}, "8月2日": {"count": 7, "avg_total": 6.21, "avg_rate": 77.7}, "8月3日": {"count": 11, "avg_total": 5.73, "avg_rate": 71.6}, "8月4日": {"count": 7, "avg_total": 5.86, "avg_rate": 73.2}, "8月5日": {"count": 8, "avg_total": 6.0, "avg_rate": 75.0}, "8月6日": {"count": 3, "avg_total": 5.83, "avg_rate": 72.9}}, "item_overall": [0.839, 0.991, 0.366, 0.786, 0.946, 0.946, 0.491, 0.491], "item_names": ["挨拶", "ヒアリング", "ニーズ確認\n(コスト/DT/効果)", "医師の複数\n施術提案", "提案内容\nの説明", "同意確認", "コース促し", "次回予約"], "date_order": ["8月1日", "8月2日", "8月3日", "8月4日", "8月5日", "8月6日"], "matrix": {"大坪": {"8月1日": {"count": 9, "avg_total": 5.94, "avg_rate": 74.3}, "8月2日": {"count": 5, "avg_total": 6.4, "avg_rate": 80.0}, "8月3日": null, "8月4日": null, "8月5日": {"count": 5, "avg_total": 6.6, "avg_rate": 82.5}, "8月6日": {"count": 3, "avg_total": 5.83, "avg_rate": 72.9}}, "工藤": {"8月1日": {"count": 1, "avg_total": 3.5, "avg_rate": 43.8}, "8月2日": {"count": 2, "avg_total": 5.75, "avg_rate": 71.9}, "8月3日": {"count": 3, "avg_total": 5.0, "avg_rate": 62.5}, "8月4日": null, "8月5日": {"count": 3, "avg_total": 5.0, "avg_rate": 62.5}, "8月6日": null}, "笹山": {"8月1日": {"count": 10, "avg_total": 5.8, "avg_rate": 72.5}, "8月2日": null, "8月3日": {"count": 8, "avg_total": 6.0, "avg_rate": 75.0}, "8月4日": {"count": 7, "avg_total": 5.86, "avg_rate": 73.2}, "8月5日": null, "8月6日": null}}, "voc_daily": {"8月1日": {"count": 32, "avg_score": 4.53, "rate": 90.6}, "8月2日": {"count": 17, "avg_score": 4.47, "rate": 89.4}, "8月3日": {"count": 16, "avg_score": 4.75, "rate": 95.0}, "8月4日": {"count": 13, "avg_score": 4.46, "rate": 89.2}, "8月5日": {"count": 17, "avg_score": 4.41, "rate": 88.2}, "8月6日": {"count": 7, "avg_score": 4.43, "rate": 88.6}}, "voc_full_range": {"7月27日": {"count": 16, "avg_score": 4.44, "rate": 88.8}, "7月28日": {"count": 16, "avg_score": 4.19, "rate": 83.8}, "7月29日": {"count": 17, "avg_score": 4.59, "rate": 91.8}, "7月30日": {"count": 19, "avg_score": 4.53, "rate": 90.5}, "7月31日": {"count": 17, "avg_score": 4.41, "rate": 88.2}, "8月1日": {"count": 32, "avg_score": 4.53, "rate": 90.6}, "8月2日": {"count": 17, "avg_score": 4.47, "rate": 89.4}, "8月3日": {"count": 16, "avg_score": 4.75, "rate": 95.0}, "8月4日": {"count": 13, "avg_score": 4.46, "rate": 89.2}, "8月5日": {"count": 17, "avg_score": 4.41, "rate": 88.2}, "8月6日": {"count": 7, "avg_score": 4.43, "rate": 88.6}, "8月7日": {"count": 7, "avg_score": 4.57, "rate": 91.4}}};
+
+// KPI
+document.querySelectorAll('.kpi-card .value')[1].textContent = DATA.overall.avg_total + ' / 8';
+document.querySelectorAll('.kpi-card .sub')[1].textContent = '達成率 ' + DATA.overall.avg_rate + '%';
+
+const counselors = Object.keys(DATA.counselor);
+const dates = DATA.date_order;
+
+// ---- Matrix table ----
+function heatColor(rate) {
+  if (rate === null || rate === undefined) return null;
+  if (rate >= 75) return { bg: '#e9ede6', fg: '#52652a' };
+  if (rate >= 55) return { bg: '#f5ecd8', fg: '#8a6d1f' };
+  return { bg: '#f3e0dc', fg: '#9c4a3a' };
+}
+
+function buildMatrix() {
+  const tbl = document.getElementById('matrixTable');
+  let thead = '<thead><tr><th class="rowhead">担当者 ＼ 日付</th>' + dates.map(d=>`<th>${d}</th>`).join('') + '<th>全体平均</th></tr></thead>';
+  let rows = counselors.map(c => {
+    let cells = dates.map(d => {
+      const cell = DATA.matrix[c][d];
+      if (!cell) return '<td><span class="heat-empty">―</span></td>';
+      const col = heatColor(cell.avg_rate);
+      return `<td><div class="heat-cell" data-c="${c}" data-d="${d}" style="background:${col.bg}; color:${col.fg};">
+        <span class="rate">${cell.avg_rate}%</span><span class="count">${cell.count}件・${cell.avg_total}/8</span>
+      </div></td>`;
+    }).join('');
+    const overall = DATA.counselor[c];
+    const ocol = heatColor(overall.avg_rate);
+    return `<tr><td class="rowhead">${c}</td>${cells}<td><div class="heat-cell" style="background:${ocol.bg}; color:${ocol.fg}; cursor:default;">
+      <span class="rate">${overall.avg_rate}%</span><span class="count">${overall.count}件・${overall.avg_total}/8</span></div></td></tr>`;
+  }).join('');
+  tbl.innerHTML = thead + '<tbody>' + rows + '</tbody>';
+
+  tbl.querySelectorAll('.heat-cell[data-c]').forEach(el => {
+    el.addEventListener('click', () => showDrill(el.dataset.c, el.dataset.d));
+  });
+}
+buildMatrix();
+
+let drillChart = null;
+function showDrill(counselor, date) {
+  const panel = document.getElementById('drillPanel');
+  panel.classList.add('active');
+  document.getElementById('drillTitle').textContent = `${date}　${counselor}分 の詳細`;
+
+  const sessions = DATA.sessions.filter(s => s.counselor===counselor && s.date===date);
+  const itemAvgs = DATA.item_names.map((_,i) => sessions.reduce((a,s)=>a+s.scores[i],0)/sessions.length);
+
+  if (drillChart) drillChart.destroy();
+  drillChart = new Chart(document.getElementById('drillRadar'), {
+    type: 'radar',
+    data: { labels: DATA.item_names, datasets: [{ label: `${date} ${counselor}`, data: itemAvgs, borderColor:'#78875a', backgroundColor:'#78875a33', pointBackgroundColor:'#78875a' }] },
+    options: { responsive: true, maintainAspectRatio: false, scales: { r: { min:0, max:1 } } }
+  });
+
+  const tbody = document.querySelector('#drillTable tbody');
+  tbody.innerHTML = '';
+  sessions.forEach(s => {
+    const rate = Math.round(s.total/8*1000)/10;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.label}</td><td>${s.total}/8</td><td>${rate}%</td><td style="font-size:0.78rem;">${s.note||''}</td>`;
+    tbody.appendChild(tr);
+  });
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// VOC vs internal audit chart
+if (DATA.voc_daily) {
+  const vocDates = dates.filter(d => DATA.voc_daily[d]);
+  new Chart(document.getElementById('vocChart'), {
+    type: 'bar',
+    data: {
+      labels: vocDates,
+      datasets: [
+        {
+          type: 'line',
+          label: 'VOC満足度(%)（カウンセリングの質）',
+          data: vocDates.map(d => DATA.voc_daily[d].rate),
+          borderColor: '#c9a86a',
+          backgroundColor: '#c9a86a',
+          yAxisID: 'y',
+          tension: 0.3,
+          fill: false,
+          order: 0
+        },
+        {
+          type: 'bar',
+          label: '内部監査 達成率(%)（8項目チェック）',
+          data: vocDates.map(d => DATA.date[d] ? DATA.date[d].avg_rate : null),
+          backgroundColor: '#78875a',
+          yAxisID: 'y',
+          order: 1
+        },
+        {
+          type: 'line',
+          label: 'VOC平均スコア(5点満点)',
+          data: vocDates.map(d => DATA.voc_daily[d].avg_score),
+          borderColor: '#9c4a3a',
+          backgroundColor: '#9c4a3a',
+          borderDash: [5,3],
+          yAxisID: 'y1',
+          tension: 0.3,
+          fill: false,
+          pointRadius: 4,
+          order: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: {
+        y: { beginAtZero: true, max: 100, position: 'left', title: { display: true, text: '％' } },
+        y1: { min: 1, max: 5, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: '平均スコア(5点満点)' } }
+      }
+    }
+  });
+
+  const vocBody = document.getElementById('vocTableBody');
+  vocDates.forEach(d => {
+    const voc = DATA.voc_daily[d];
+    const internal = DATA.date[d] ? DATA.date[d].avg_rate : null;
+    const diff = internal !== null ? Math.round((voc.rate - internal)*10)/10 : null;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${d}</td><td>${voc.count}件</td><td>${voc.avg_score}/5</td><td>${voc.rate}%</td><td>${internal !== null ? internal+'%' : '―'}</td><td>${diff !== null ? (diff>0?'+':'')+diff+'pt' : '―'}</td>`;
+    vocBody.appendChild(tr);
+  });
+}
+
+// Counselor chart
+new Chart(document.getElementById('counselorChart'), {
+  type: 'bar',
+  data: {
+    labels: counselors,
+    datasets: [{
+      label: '達成率(%)',
+      data: counselors.map(c => DATA.counselor[c].avg_rate),
+      backgroundColor: ['#78875a','#a3a3a3','#c9a86a']
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { title: { display: true, text: '担当者別 達成率(%)' }, legend: { display: false } },
+    scales: { y: { beginAtZero: true, max: 100 } }
+  }
+});
+
+// Date trend chart
+new Chart(document.getElementById('dateChart'), {
+  type: 'line',
+  data: {
+    labels: dates,
+    datasets: [{
+      label: '達成率(%)',
+      data: dates.map(d => DATA.date[d].avg_rate),
+      borderColor: '#78875a',
+      backgroundColor: 'rgba(120,135,90,0.12)',
+      tension: 0.3,
+      fill: true
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { title: { display: true, text: '日別 達成率トレンド(%)' }, legend: { display: false } },
+    scales: { y: { beginAtZero: true, max: 100 } }
+  }
+});
+
+// Item chart
+new Chart(document.getElementById('itemChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.item_names,
+    datasets: [{
+      label: '平均スコア',
+      data: DATA.item_overall,
+      backgroundColor: DATA.item_overall.map(v => v >= 0.8 ? '#78875a' : v >= 0.5 ? '#c9a86a' : '#b3564a')
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true, max: 1 } }
+  }
+});
+
+// Radar chart (overall by counselor)
+const radarColors = ['#78875a','#9ca3af','#c9a86a'];
+new Chart(document.getElementById('radarChart'), {
+  type: 'radar',
+  data: {
+    labels: DATA.item_names,
+    datasets: counselors.map((c,i) => ({
+      label: c,
+      data: DATA.counselor[c].item_avgs,
+      borderColor: radarColors[i],
+      backgroundColor: radarColors[i] + '33',
+      pointBackgroundColor: radarColors[i]
+    }))
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    scales: { r: { min: 0, max: 1 } }
+  }
+});
+
+// Session table
+const tbody = document.querySelector('#sessionTable tbody');
+const dateSelect = document.getElementById('filterDate');
+const counselorSelect = document.getElementById('filterCounselor');
+dates.forEach(d => {
+  const o = document.createElement('option'); o.value = d; o.textContent = d; dateSelect.appendChild(o);
+});
+counselors.forEach(c => {
+  const o = document.createElement('option'); o.value = c; o.textContent = c; counselorSelect.appendChild(o);
+});
+
+function badgeFor(rate) {
+  if (rate >= 75) return 'good';
+  if (rate >= 55) return 'mid';
+  return 'bad';
+}
+
+function render() {
+  const df = dateSelect.value, cf = counselorSelect.value;
+  tbody.innerHTML = '';
+  DATA.sessions.filter(s => (!df || s.date===df) && (!cf || s.counselor===cf)).forEach(s => {
+    const rate = Math.round(s.total/8*1000)/10;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.date}</td><td>${s.counselor}</td><td>${s.label}</td><td>${s.total}/8</td>
+      <td><span class="badge ${badgeFor(rate)}">${rate}%</span></td><td style="max-width:420px;">${s.note||''}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+dateSelect.addEventListener('change', render);
+counselorSelect.addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
