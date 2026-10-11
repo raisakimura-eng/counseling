@@ -1,0 +1,5 @@
+# Patient data and generated dashboards never go into the repository
+*.json
+*.html
+work/
+__pycache__/
