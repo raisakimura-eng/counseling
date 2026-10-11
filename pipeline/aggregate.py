@@ -170,3 +170,23 @@ def role_numeric(recs, role, min_n):
                             for k, x in g.items() if len(x) >= min_n], key=lambda s: -s['n'])
     out['segs'] = segs
     return out
+
+
+def low_clinic(recs, raw):
+    """Visits whose clinic score is ★3 or lower, with every role's score and every comment of that visit.
+
+    Order: score ascending, then submitted date ascending, later submissions first within a day
+    (this reproduces the hand-built Aug/Sep/Oct lists exactly).
+    """
+    out = []
+    for rec in sorted((r for r in recs if r['clinic'] is not None and r['clinic'] <= 3),
+                      key=lambda r: (r['clinic'], r['date'], -r['sub'].timestamp())):
+        roles = {}
+        for R in ROLES:
+            vs = [v for (r, n, v) in rec['rat'] if r == R]
+            if vs:
+                roles[R] = float(mean(vs))
+        cm, _ = extract_comments(raw[rec['id']])
+        out.append(dict(chart=rec['chart'], date=rec['date'], score=rec['clinic'], seg=rec['seg'], age=rec['age'], nat=rec['nat'],
+                        roles=roles, comments=[dict(role=c['r'], shine=False, target=c['tg'], text=c['x']) for c in cm]))
+    return out

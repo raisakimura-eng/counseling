@@ -10,6 +10,8 @@ Usage:
 - Comments, themes and 「輝いていたスタッフ」 are kept from the current HTML; the
   responses in LABELS (prepare_labels.py output with t/p/shine filled in) are added.
 - Summary blocks, the month trend and all narrative copy are regenerated.
+- 「総評★3以下の回」(lowClinic) is rebuilt from the API data.
+- A month that is not on the dashboard yet gets a new tab (before 全期間).
 - Earlier closed months are left untouched.
 Both the raw files and the output HTML contain patient data: keep them outside the repository.
 """
@@ -22,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import copytext  # noqa: E402
-from aggregate import ROLES, STAFF_ROLE, extract_comments, load, role_numeric  # noqa: E402
+from aggregate import ROLES, STAFF_ROLE, extract_comments, load, low_clinic, role_numeric  # noqa: E402
 from html_payload import get_payload, read_html, set_payload  # noqa: E402
 
 POL_ORDER = {'neg': 0, 'mix': 1, 'neu': 2, 'pos': 3}
@@ -57,18 +59,38 @@ def merge_shine(old, new):
     return sorted(d.values(), key=lambda s: -s['n'])
 
 
-def rebuild_period(p, per, label, recs, comments, shine, n_shine, sub_to):
+def add_month(p, per, label):
+    """Add an empty tab for a new month, modelled on the latest month (inserted before 全期間)."""
+    months = [x['key'] for x in p['periodList'] if x['key'] != 'all']
+    prev = months[-1]
+    for R in ROLES:
+        E = cp.deepcopy(p['roles'][R]['periods'][prev])
+        E.pop('kr1', None)  # counseling-audit data is month specific and not produced by this pipeline
+        E.update(comments=[], shine=[], lowClinic=[])
+        E['meta'].update(period=label, nShine=0, nRoleComment=0, nRoleReq=0, subFrom=None, subTo=None)
+        p['roles'][R]['periods'][per] = E
+    p['periodList'].insert(len(months), dict(key=per, label=label))
+    for t in p['summary']['trend']:
+        t['months'].append(dict(k=per, lab=label, avg=None, n=0, req=0, com=0))
+    p['summary']['trendClinic'].append(dict(k=per, lab=label, avg=None, n=0, to=None))
+
+
+def rebuild_period(p, per, label, recs, raw, comments, shine, n_shine, sub_to):
     P = {}
+    low = low_clinic(recs, raw)
     for R in ROLES:
         E = p['roles'][R]['periods'][per]
         N = cp.deepcopy(E)
         N.update(role_numeric(recs, R, E['meta']['minN']))
+        N['hoursSparse'] = max((h['n'] for h in N['hours']), default=0) < 8
+        N['lowClinic'] = low
         N['comments'] = sorted(E['comments'] + [c for c in comments if c['r'] == R],
                                key=lambda c: (POL_ORDER[c['p']], c['s'] or 9, c['d']))
         N['roleThemes'], N['rolePol'] = copytext.themes_pol(N['comments'])
         N['shine'] = merge_shine(E['shine'], shine)
         N['meta'].update(nResp=len(recs), nRoleComment=len(N['comments']), nRoleReq=N['rolePol']['neg'] + N['rolePol']['mix'],
-                         nShine=E['meta']['nShine'] + n_shine, subTo=sub_to)
+                         nShine=E['meta']['nShine'] + n_shine, subTo=sub_to,
+                         subFrom=E['meta']['subFrom'] or min(r['date'] for r in recs))
         P[R] = N
     for R in ROLES:
         P[R]['copy'] = copytext.copy(P, R, label)
@@ -90,15 +112,17 @@ def main():
 
     html = read_html(a.html)
     p = get_payload(html)
-    assert a.period in p['roles'][ROLES[0]]['periods'], f"period {a.period} not on the dashboard yet (new month: see README)"
+    if a.period not in p['roles'][ROLES[0]]['periods']:
+        add_month(p, a.period, a.label)
+        print(f'added a new tab: {a.label} ({a.period})')
     month_recs, _ = load(*a.month)
     all_recs, raw = load(*a.all)
     month_recs = [r for r in month_recs if r['date'] <= a.sub_to]
     all_recs = [r for r in all_recs if r['date'] <= a.sub_to]
     comments, shine, n_shine = labelled_items(json.load(open(a.labels)), raw, {r['id']: r for r in all_recs})
 
-    rebuild_period(p, a.period, a.label, month_recs, comments, shine, n_shine, a.sub_to)
-    rebuild_period(p, 'all', '全期間', all_recs, comments, shine, n_shine, a.sub_to)
+    rebuild_period(p, a.period, a.label, month_recs, raw, comments, shine, n_shine, a.sub_to)
+    rebuild_period(p, 'all', '全期間', all_recs, raw, comments, shine, n_shine, a.sub_to)
 
     for t in p['summary']['trend']:
         D = p['roles'][t['role']]['periods'][a.period]

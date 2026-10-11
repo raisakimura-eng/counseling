@@ -3,6 +3,7 @@
 Usage:
     python3 -I pipeline/prepare_labels.py CURRENT_HTML PERIOD_KEY OUT_TODO_JSON RAW_JSON [RAW_JSON ...]
 
+PERIOD_KEY may be a month that has no tab yet (then every response in RAW_JSON is new).
 A response counts as new when it was submitted after the period's current end
 date (meta.subTo), or when it has non-empty comments none of which appear in
 the dashboard yet (late submissions). OUT_TODO_JSON holds comment text, so
@@ -19,8 +20,11 @@ from html_payload import get_payload, read_html  # noqa: E402
 
 
 def find_new(payload, per, recs, raw):
-    sub_to = payload['roles'][ROLES[0]]['periods'][per]['meta']['subTo']
-    known = {(c['d'], c['k'], c['x'].strip()) for r in ROLES for c in payload['roles'][r]['periods'][per]['comments']}
+    if per not in payload['roles'][ROLES[0]]['periods']:  # a new month: every response is new
+        sub_to, known = '', set()
+    else:
+        sub_to = payload['roles'][ROLES[0]]['periods'][per]['meta']['subTo']
+        known = {(c['d'], c['k'], c['x'].strip()) for r in ROLES for c in payload['roles'][r]['periods'][per]['comments']}
     new = []
     for rec in sorted(recs, key=lambda r: r['sub']):
         cm, shine = extract_comments(raw[rec['id']])

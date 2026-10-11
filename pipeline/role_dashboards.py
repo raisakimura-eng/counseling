@@ -32,15 +32,16 @@ def main():
         html = read_html(f)
         role = ROLE_OF[re.search(r'NaA Clinic · (\w+)', html).group(1)]
         p = get_payload(html)
-        p['periods'] = {k: p4['roles'][role]['periods'][k] for k in p['periods']}
+        p['periods'] = {x['key']: p4['roles'][role]['periods'][x['key']] for x in p4['periodList']}  # includes a newly added month
         p['periodList'] = p4['periodList']
         html = set_payload(html, p)
         if note:
             html = KOS_NOTE.sub(note.group(0), html) if KOS_NOTE.search(html) else html.replace('含みません。', '含みません。' + note.group(0), 1)
         out = os.path.join(out_dir, f'{role}とクリニック総評.html')
         open(out, 'w', encoding='utf-8').write(html)
-        oct_meta = p['periods']['oct']['meta'] if 'oct' in p['periods'] else {}
-        print(f'{role}: {out}  (10月 {oct_meta.get("subFrom")}〜{oct_meta.get("subTo")}, {oct_meta.get("nResp")}名)')
+        last = [x for x in p['periodList'] if x['key'] != 'all'][-1]
+        lm = p['periods'][last['key']]['meta']
+        print(f'{role}: {out}  ({last["label"]} {lm.get("subFrom")}〜{lm.get("subTo")}, {lm.get("nResp")}名)')
 
 
 if __name__ == '__main__':
