@@ -21,6 +21,7 @@ claude.ai に公開している「4職種横断ダッシュボード」の **当
 | `prepare_labels.py` | ダッシュボードにまだ入っていない回答を抜き出し、コメント分類用の作業ファイルを作る |
 | `build.py` | 当月と全期間を作り直したHTMLを出力する |
 | `verify.py` | 既存の月を再計算し、ダッシュボードと一致するか確認する |
+| `role_dashboards.py` | 職種別ダッシュボード4種（受付／看護師／医師／カウンセラーとクリニック総評）を4職種横断の新データで更新する |
 | `../data/staff_roles.csv` | スタッフ名と職種の対応表（施術評価の医師／看護師の振り分けに使う） |
 
 ## 前提
@@ -55,7 +56,13 @@ python3 -I pipeline/build.py --html $W/current.html --period oct --label 10月 \
   --labels $W/todo.json --sub-to 2026-10-11 --out $W/dashboard.html
 
 # 6. ブラウザで全タブを表示してエラーがないか確認し、Artifact publish（url を指定）で同じURLに公開
+
+# 7. 職種別ダッシュボード4種も更新（元のHTMLは claude.ai プロジェクトのチャットから書き出したもの）
+python3 -I pipeline/role_dashboards.py $W/dashboard.html $W/roles $W/role_src/*.html
 ```
+
+職種別ダッシュボードの `periods[期間]` は、4職種横断の `roles[職種].periods[期間]` と完全に同じデータ
+（2026-10-11 に全職種・全期間で一致を確認）。そのため職種別は集計し直さず、4職種横断の結果をコピーするだけでよい。
 
 `build.py` は分類漏れ（`t` が空、`p` が不正、輝いていたスタッフの回答があるのに `shine` が空）があると止まる。
 
