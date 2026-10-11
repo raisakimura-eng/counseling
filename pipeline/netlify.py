@@ -30,9 +30,13 @@ def download(site, out):
     return len(b)
 
 
-def deploy(site, path, title):
-    """Publish PATH as /index.html of SITE and wait until it is live. Returns the deploy id."""
-    if not _req('GET', f'/sites/{site}.netlify.app').get('has_password'):
+def deploy(site, path, title, require_password=True):
+    """Publish PATH as /index.html of SITE and wait until it is live. Returns the deploy id.
+
+    require_password=False is only for the sales dashboards (naa-counselor, naaclinic), which the
+    owner decided on 2026-10-12 to keep public. The survey dashboards always require protection.
+    """
+    if require_password and not _req('GET', f'/sites/{site}.netlify.app').get('has_password'):
         raise RuntimeError(f'{site}: password protection is OFF; not deploying a page with patient data. Turn it back on in Netlify.')
     body = open(path, 'rb').read()
     sha = hashlib.sha1(body).hexdigest()
