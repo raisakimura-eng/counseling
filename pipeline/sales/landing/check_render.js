@@ -28,6 +28,7 @@ const path = require('path');
   };
   let views = 0;
   for (const v of ['today', 'oct', 'past', 'sum']) {
+    if (await page.$eval(`#vt-${v}`, b => b.hidden)) continue;  // e.g. the new month on its 1st day
     await page.click(`#vt-${v}`);
     await page.waitForTimeout(50);
     if (v === 'oct' || v === 'past') {

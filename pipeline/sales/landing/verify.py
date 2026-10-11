@@ -26,6 +26,7 @@ from data import Raw, month_days  # noqa: E402
 CORE = ['visN', 'bookN', 'sameN', 'cancN', 'A', 'Amorning', 'C', 'payC', 'resvV', 'missN', 'avg', 'upS', 'dnS', 'zsum',
         'Aold', 'low']
 KPI = ['aov', 'payAov', 'tpp', 'multi', 'nomenuN']
+LISTS = ['lead', 'ages', 'ch', 'prep', 'trTot', 'push']
 
 
 def day_date(lbl, year):
@@ -42,9 +43,15 @@ def compare_days(raw, days, year, fields):
         for f in fields:
             a = p.get(f) if f not in KPI else p['kpi'].get(f)
             b = r.get(f) if f not in KPI else r['kpi'].get(f)
-            if a is None and b is None:
+            if f in LISTS:
+                if f == 'push' and a:  # the page's push counts stop at its export time (asof)
+                    a, b = a['rows'], b['rows']
+                if f in ('ch', 'ages'):
+                    a, b = sorted(map(tuple, a or [])), sorted(map(tuple, [x for x in b or [] if x[1]]))
+                    a = [x for x in a if x[1]]
+            if a is None:
                 continue
-            ok = a == b or (isinstance(a, (int, float)) and isinstance(b, (int, float)) and abs(a - b) <= max(1, abs(a) * 1e-6))
+            ok = a == b or (isinstance(a, (int, float)) and isinstance(b, (int, float)) and abs(a) >= 1000 and abs(a - b) <= 1)  # yen rounding
             tot[f][0] += ok
             tot[f][1] += 1
             if not ok:
@@ -65,7 +72,7 @@ def main():
     html = open(a.html, encoding='utf-8').read()
     c = page.get_consts(html)
     mon = c.get('MON') or {'y': int(c['TODAY']['label'][:4]), 'by': int(c['TODAY']['label'][:4])}
-    fields = CORE + (KPI if a.all_fields else [])
+    fields = CORE + (KPI + LISTS if a.all_fields else [])
     report, fatal = {}, []
     for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
         rows, summ = compare_days(raw, c[key], year, fields)

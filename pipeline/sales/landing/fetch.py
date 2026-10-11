@@ -2,7 +2,7 @@
 
 Usage:
     python3 -I pipeline/sales/landing/fetch.py --from 2026-07-01 --to 2026-10-11 --work /tmp/sales-work/landing
-        [--future-to 2026-10-31] [--kinds schedule,transaction,purchase,procedure,prepaid] [--visitors]
+        [--future-to 2026-10-31] [--kinds schedule,transaction,purchase,procedure,prepaid] [--visitors YYYY-MM]
 
 --from / --to are JST dates (both inclusive). Each kind is fetched month by month
 (the API is happiest with ranges of one month or less) into

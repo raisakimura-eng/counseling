@@ -78,6 +78,8 @@ def main():
     if today.day != 1 and (not c['DAYS_CUR'] or c['DAYS_CUR'][-1]['date'] != f'{yday.month}/{yday.day}'):
         problems.append('yesterday is missing from the month')
     last = (c['DAYS_CUR'] or c['DAYS_BASE'])[-1]
+    if last['bookN'] and not last['visN']:
+        problems.append(f"{last['date']}: reservations but no completed visit (KOS statuses not updated yet?)")
     if last['visN'] and not last.get('payC'):
         problems.append(f"{last['date']}: visits but no payments (KOS data incomplete?)")
     if problems:

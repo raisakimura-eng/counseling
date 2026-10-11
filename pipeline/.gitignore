@@ -3,3 +3,4 @@
 *.html
 work/
 __pycache__/
+!sales/targets.json

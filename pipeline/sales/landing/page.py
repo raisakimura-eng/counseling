@@ -61,6 +61,8 @@ JS_EDITS = [
     ("  const VIEWS = ['today', 'oct', 'past', 'sum'];",
      "  document.getElementById('vt-oct').textContent = MON.c + '月分'; document.getElementById('vt-past').textContent = MON.b + '月分';\n"
      "  const VIEWS = ['today', 'oct', 'past', 'sum'];", 1),
+    # a month with a single finished day: the line charts divided by (days - 1)
+    ("(W - left - right) * i / (DAYS.length - 1)", "(W - left - right) * i / Math.max(1, DAYS.length - 1)", 1),
     # on the 1st of a month the current month has no finished day yet: hide its tab instead of failing
     ("  function view(v){\n    try { sessionStorage.setItem('fa-view', v); }",
      "  function view(v){\n    if (v === 'oct' && !DAYS_CUR.length) v = 'today';\n    try { sessionStorage.setItem('fa-view', v); }", 1),

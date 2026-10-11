@@ -39,11 +39,18 @@ def proc_tasks(raw, d):
     return out
 
 
+def prod_name(t):
+    """Product title without campaign tags and medal emojis: 【ポイント5倍還元】オンダプロ / 🥈オンダプロ -> オンダプロ."""
+    import re
+    k = t.get('productTitle') or t.get('title') or ''
+    return re.sub(r'【[^】]*】|[🥇🥈🥉]', '', k).strip()
+
+
 def act_label(tasks):
     """Treatments actually done, largest 施術実施額 first: 'オンダプロ ＋ リジュラン'."""
     amt = collections.Counter()
     for t in tasks:
-        amt[t.get('productTitle') or t.get('title')] += money(t.get('ticketPriceV2'))
+        amt[prod_name(t)] += money(t.get('ticketPriceV2'))
     return ' ＋ '.join(k for k, _ in sorted(amt.items(), key=lambda x: -x[1]))
 
 
@@ -188,13 +195,13 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         return list(g.values())
     ages = groups(lambda r: raw.age_band(r['visitorId'], d) or '不明', config.AGE_BANDS)
     ages = [a for a in ages if a[0] != '不明' or a[1]]
-    ch = sorted(groups(lambda r: r.get('visitorFunnelName') or '未設定'), key=lambda a: -a[2])
+    ch = sorted(groups(lambda r: r.get('reservationFunnelName') or '未設定'), key=lambda a: -a[2])
     # 売れた施術: every procedure task of the day (staff included, as on the page), by product title
     tr = collections.defaultdict(lambda: [set(), 0])
     ntask, pts = 0, set()
     for vid, ts in x.tasks.items():
         for t in ts:
-            k = t.get('productTitle') or t.get('title')
+            k = prod_name(t)
             tr[k][0].add(vid)
             tr[k][1] += money(t.get('ticketPriceV2'))
             ntask += 1
@@ -204,7 +211,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     trCnt = sorted(trl, key=lambda a: (-a[1], -a[2]))[:1]
     # 客単価の内訳
     payers = [r for r in vis if paid(r) > 0]
-    nkinds = [len({t.get('productTitle') for t in x.tasks.get(r['visitorId'], [])}) for r in payers]
+    nkinds = [len({t.get('productTitle') for t in x.tasks.get(r['visitorId'], [])}) for r in payers]  # kinds as titled in KOS
     single = sum(1 for n in nkinds if n == 1)
     multi = sum(1 for n in nkinds if n >= 2)
     kpi = {'aov': round(C / len(vis)) if vis else 0,
@@ -405,7 +412,7 @@ def extra(raw, days):
     for d in days:
         for vid, ts in proc_tasks(raw, d).items():
             for t in ts:
-                k = t.get('productTitle') or t.get('title')
+                k = prod_name(t)
                 tr[k][0].add((vid, d))
                 tr[k][1] += money(t.get('ticketPriceV2'))
                 rows += 1
@@ -416,8 +423,9 @@ def extra(raw, days):
     for _, e in buys:
         amt[(e.get('prepaidCardTitle') or '').replace('NaA Rewards - ', '')] += money(e.get('chargingAmountV2'))
     ages = collections.Counter(raw.age_band(e.get('visitorId') or e.get('ownerId'), d) or '不明' for d, e in buys)
-    same = sum(1 for d, e in buys if any(u['chargingType'] == 'PAYMENT' and u.get('prepaidCardId') == e.get('prepaidCardId')
-                                          for u in raw.prepaid.get(d, [])))
+    used = {(d, u.get('prepaidCardId')) for d in days for u in raw.prepaid.get(d, [])
+            if u.get('chargingAmountType') == 'BALANCE' and u['chargingType'] == 'PAYMENT'}
+    same = sum(1 for d, e in buys if (d, e.get('prepaidCardId')) in used)
     return {'trTop': sorted(trl, key=lambda a: -a[2])[:10], 'trCnt': sorted(trl, key=lambda a: (-a[1], -a[2]))[:5],
             'trTot': {'amt': round(sum(v[1] for v in tr.values())), 'rows': rows},
             'prepCards': [[k, n, amt[k]] for k, n in cards.most_common()],
@@ -472,9 +480,12 @@ def today_record(raw, d, base, now_label='0:00時点'):
     hs = [h for h, _ in hours] or [10]
     hrs = [[f'{h:02d}', hours[(h, True)], hours[(h, False)]] for h in range(min(min(hs), 10), max(max(hs), 18) + 1)]
     cnt = collections.Counter()
-    for r in active:
-        if r.get('requestedOptionTitles'):
-            cnt[menu_label(r, 30).replace(' ＋ ', ' + ')] += 1
+    for r in active:  # 予約の多いメニュー: each requested menu (希望施術) counted once per reservation
+        for t in set(r.get('requestedOptionTitles') or []):
+            if t.startswith('指名料'):
+                continue
+            t = re.sub(r'\s+', ' ', re.sub(r'【[^】]*】', ' ', t)).strip()
+            cnt[t if len(t) <= 30 else t[:29] + '…'] += 1
 
     def grp(key, order=None):
         g = {}
@@ -502,7 +513,7 @@ def today_record(raw, d, base, now_label='0:00時点'):
         'full': round(forecast(active + cancelled, _avg(resv(r) for r in active + cancelled))), 'fullN': len(active) + len(cancelled),
         'exact': True, 'estN': 0, 'band': base['band'], 'fullBias': base.get('fullBias', 0), 'vrate': coef['vrate'], 'byType': byType,
         'hours': hrs, 'topCnt': [{'name': k, 'n': n} for k, n in cnt.most_common(8)],
-        'ch': grp(lambda r: r.get('visitorFunnelName') or '未設定'),
+        'ch': grp(lambda r: r.get('reservationFunnelName') or '未設定'),
         'ages': grp(lambda r: raw.age_band(r['visitorId'], d) or '不明', config.AGE_BANDS + ['不明']),
         'sdRef': {'wd': wdn, 'n': sdr['n'], 'paid': sdr['paid'], 'days': sdr['days'], 'allN': base['sd']['allN'], 'allPaid': base['sd']['allPaid']},
         'resvBase': None, 'calNote': 'upsell', 'bias': base['bias'], 'live': None, 'final': None, 'basis': 'morning',

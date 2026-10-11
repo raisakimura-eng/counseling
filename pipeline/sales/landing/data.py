@@ -84,8 +84,7 @@ class Raw:
         dob = (self.visitors.get(visitor_id) or {}).get('dateOfBirth')
         if not dob:
             return None
-        b = dt.date.fromisoformat(dob[:10])
-        age = on.year - b.year - ((on.month, on.day) < (b.month, b.day))
+        age = on.year - int(dob[:4])  # 年代 = visit year − birth year (birthday not considered), as on the page
         if age < 10:
             return None
         return f'{min(age // 10, 7) * 10}代'
