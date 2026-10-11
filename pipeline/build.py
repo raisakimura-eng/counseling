@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import copytext  # noqa: E402
-from aggregate import ROLES, STAFF_ROLE, extract_comments, load, low_clinic, role_numeric  # noqa: E402
+from aggregate import EXCLUDED, ROLES, STAFF_ROLE, extract_comments, load, low_clinic, role_numeric  # noqa: E402
 from html_payload import get_payload, read_html, set_payload  # noqa: E402
 
 POL_ORDER = {'neg': 0, 'mix': 1, 'neu': 2, 'pos': 3}
@@ -84,7 +84,7 @@ def rebuild_period(p, per, label, recs, raw, comments, shine, n_shine, sub_to):
         N.update(role_numeric(recs, R, E['meta']['minN']))
         N['hoursSparse'] = max((h['n'] for h in N['hours']), default=0) < 8
         N['lowClinic'] = low
-        N['comments'] = sorted(E['comments'] + [c for c in comments if c['r'] == R],
+        N['comments'] = sorted([c for c in E['comments'] if c['tg'] not in EXCLUDED] + [c for c in comments if c['r'] == R],
                                key=lambda c: (POL_ORDER[c['p']], c['s'] or 9, c['d']))
         N['roleThemes'], N['rolePol'] = copytext.themes_pol(N['comments'])
         N['shine'] = merge_shine(E['shine'], shine)

@@ -25,7 +25,11 @@ DOW = '月火水木金土日'
 EMPTY = {'なし', '特になし', '特に無し', '無し', '없음', '无', 'none', 'ない', '特にない', '-', 'ナシ', 'n/a', 'na', 'x', ''}
 
 STAFF_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'staff_roles.csv')
-STAFF_ROLE = {r['氏名']: r['ダッシュボード職種'] for r in csv.DictReader(open(STAFF_CSV, encoding='utf-8'))}
+_STAFF = list(csv.DictReader(open(STAFF_CSV, encoding='utf-8')))
+STAFF_ROLE = {r['氏名']: r['ダッシュボード職種'] for r in _STAFF}
+# Accounts marked 「集計から除外」 in staff_roles.csv (shared logins such as クリニックスタッフ): their ratings and
+# comments are dropped everywhere, so they never count towards a role, the staff list or 総評★3以下の回.
+EXCLUDED = {r['氏名'] for r in _STAFF if '集計から除外' in r['備考']}
 DOCTORS = {name for name, role in STAFF_ROLE.items() if role == '医師'}
 
 
@@ -64,6 +68,8 @@ def parse(a):
             clinic = int(val)
             continue
         name = _target(q)
+        if name in EXCLUDED:
+            continue
         rat.append((_role(kind, name), name, int(val)))
     # age = submitted year - birth year (this is how the original dashboard bucketed ages)
     age = f"{(sub.year - int(v['dateOfBirth'][:4])) // 10 * 10}代" if v.get('dateOfBirth') else None
@@ -87,6 +93,8 @@ def extract_comments(a):
         if not kind:
             continue
         tg = _target(q)
+        if tg in EXCLUDED:
+            continue
         role = _role(kind, tg)
         score = None  # star rating given to the same evaluation target
         for q2 in qs:
