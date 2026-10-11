@@ -10,8 +10,8 @@ $WORK/raw/<kind>_<YYYY-MM>.json. A month that ended before the last full fetch i
 reused from disk unless --refresh is given; the current month is always re-fetched.
 --future-to also fetches *reservations* (schedule, by reservation start) up to that
 date, for the forecast of today / month end.
---visitors fills $WORK/raw/visitors.json (visitorId -> dateOfBirth) with
-/visitor/open/v1/queries/get-visitor for visitors not cached yet (age bands).
+--visitors YYYY-MM fills $WORK/raw/visitors.json (visitorId -> dateOfBirth) with
+/visitor/open/v1/queries/get-visitor for visitors (reservations from that month on) not cached yet (年代).
 
 Everything written here contains patient data: keep $WORK outside the repository.
 """
@@ -67,6 +67,10 @@ class Client:
                     time.sleep(2 + 3 * attempt)
                 else:
                     raise
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
+                if attempt == 3:
+                    raise
+                time.sleep(3 + 5 * attempt)
 
     def fetch_all(self, path, body, limit=200):
         data, cursor = [], None
@@ -83,7 +87,17 @@ class Client:
 
 def fetch_kind(cli, kind, start, end_excl):
     path, f_from, f_to = KINDS[kind]
-    return cli.fetch_all(path, {f_from: utc(start), f_to: utc(end_excl)})
+    if kind != 'transaction':
+        return cli.fetch_all(path, {f_from: utc(start), f_to: utc(end_excl)})
+    # transaction rows carry no creation time (only lastUpdatedPaymentDateTimeUtc), so fetch one JST day
+    # at a time and stamp each row with the day it was created ("_day")
+    out, d = [], start
+    while d < end_excl:
+        for r in cli.fetch_all(path, {f_from: utc(d), f_to: utc(d + dt.timedelta(days=1))}):
+            r['_day'] = d.isoformat()
+            out.append(r)
+        d += dt.timedelta(days=1)
+    return out
 
 
 def month_ranges(start, end_incl):
@@ -101,7 +115,7 @@ def main():
     ap.add_argument('--work', default=os.environ.get('WORK', '/tmp/sales-work/landing'))
     ap.add_argument('--kinds', default=','.join(KINDS))
     ap.add_argument('--refresh', action='store_true', help='re-fetch closed months too')
-    ap.add_argument('--visitors', action='store_true')
+    ap.add_argument('--visitors', metavar='YYYY-MM', help='also fetch birth dates of visitors with reservations from this month on')
     a = ap.parse_args()
     os.umask(0o077)
     raw = os.path.join(a.work, 'raw')
@@ -110,7 +124,7 @@ def main():
     frm, to = dt.date.fromisoformat(a.frm), dt.date.fromisoformat(a.to)
     today = dt.datetime.now(JST).date()
     cli = Client()
-    for kind in a.kinds.split(','):
+    for kind in filter(None, a.kinds.split(',')):
         end = to
         if kind == 'schedule' and a.future_to:
             end = max(end, dt.date.fromisoformat(a.future_to))
@@ -126,26 +140,33 @@ def main():
                        'data': data}, open(out, 'w'), ensure_ascii=False)
             print(f'{kind} {ym}: {len(data)} rows', flush=True)
     if a.visitors:
-        fetch_visitors(cli, raw)
+        fetch_visitors(cli, raw, a.visitors)
 
 
-def fetch_visitors(cli, raw):
+def fetch_visitors(cli, raw, since):
+    """Birth dates (for 年代) of everyone with a non-cancelled reservation in the schedule files from
+    month SINCE on. Cached in visitors.json; only dateOfBirth is kept (no names, phone numbers)."""
+    from concurrent.futures import ThreadPoolExecutor
     path = os.path.join(raw, 'visitors.json')
     cache = json.load(open(path)) if os.path.exists(path) else {}
     ids = set()
     for f in os.listdir(raw):
-        if f.startswith(('schedule_', 'transaction_')):
-            ids |= {r.get('visitorId') for r in json.load(open(os.path.join(raw, f)))['data'] if r.get('visitorId')}
+        if f.startswith('schedule_') and f[9:16] >= since:
+            ids |= {r['visitorId'] for r in json.load(open(os.path.join(raw, f)))['data']
+                    if r.get('visitorId') and r['reservationStatus'] != 'CANCELED'}
     todo = sorted(ids - set(cache))
-    for i, vid in enumerate(todo):
+
+    def one(vid):
         try:
-            v = cli.post(VISITOR_PATH, {'id': vid})
-            v = v.get('visitor', v)
-            cache[vid] = {'dateOfBirth': v.get('dateOfBirth') or v.get('birthDateUtc') or v.get('birthDayUtc')}
+            v = cli.post(VISITOR_PATH, {'id': vid}).get('data') or {}
+            return vid, {'dateOfBirth': v.get('dateOfBirth')}
         except urllib.error.HTTPError as e:
-            cache[vid] = {'dateOfBirth': None, 'error': e.code}
-        if i % 100 == 99:
-            json.dump(cache, open(path, 'w'))
+            return vid, {'dateOfBirth': None, 'error': e.code}
+    with ThreadPoolExecutor(8) as ex:
+        for i, (vid, v) in enumerate(ex.map(one, todo)):
+            cache[vid] = v
+            if i % 200 == 199:
+                json.dump(cache, open(path, 'w'))
     json.dump(cache, open(path, 'w'))
     print(f'visitors: {len(todo)} fetched, {len(cache)} cached')
 
