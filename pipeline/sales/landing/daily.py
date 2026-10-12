@@ -6,7 +6,7 @@
 1. downloads the live page from Netlify (site `naaclinic`), unless --html is given
 2. fetches KOS statistics into $WORK (default /tmp/sales-work/landing; patient data, outside the repo)
 3. build.py: closes yesterday, makes today's forecast, rolls the month over on the 1st
-4. verify.py: compares the published days with the API (report only)
+4. verify.py: compares the published days with the API (a FATAL difference stops the run)
 5. check_render.js: opens every tab/day in Chromium (fails on errors, NaN, undefined)
 
 It does not deploy. The new page is $WORK/new.html; publishing is a separate, deliberate step.
@@ -113,10 +113,9 @@ def main():
         y, m = map(int, base_ym.split('-'))
         k = y * 12 + m - 1 - 2
         first = dt.date(k // 12, k % 12 + 1, 1)
-    elif restate_base or today.day == 1:
-        first = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1)  # the previous month
     else:
-        first = today.replace(day=1)
+        # always include the previous (reference) month: verify.py re-checks its 決済ベース total every day
+        first = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1)
     month_end = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
     vis_from = base_ym if need_summary else first.strftime('%Y-%m')
     rc = py('fetch.py', '--from', first, '--to', today, '--future-to', month_end, '--work', WORK, '--visitors', vis_from)
@@ -150,7 +149,8 @@ def main():
         problems.append(f"{last['date']}: visits but no payments (KOS data incomplete?)")
     if problems:
         sys.exit('STOP: ' + '; '.join(problems))
-    py('verify.py', '--html', new, '--work', WORK, '--json', os.path.join(WORK, 'verify.json'))
+    if py('verify.py', '--html', new, '--work', WORK, '--json', os.path.join(WORK, 'verify.json')):
+        sys.exit('STOP: verify.py found a FATAL difference; not ready to publish')
     npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
     rc = subprocess.run(['node', os.path.join(HERE, 'check_render.js'), new], env=dict(os.environ, NODE_PATH=npm_root)).returncode
     if rc:
