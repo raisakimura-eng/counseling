@@ -1,6 +1,7 @@
 """Daily update of the 着地予想ダッシュボード (meant to run at 0:00 JST).
 
     python3 -I pipeline/sales/landing/daily.py [--today YYYY-MM-DD] [--html CURRENT.html]
+    python3 -I pipeline/sales/landing/daily.py --intraday     # 12/14/16/18/20時: today's results only
 
 1. downloads the live page from Netlify (site `naaclinic`), unless --html is given
 2. fetches KOS statistics into $WORK (default /tmp/sales-work/landing; patient data, outside the repo)
@@ -39,13 +40,42 @@ def py(script, *args):
     return subprocess.run([sys.executable, '-I', os.path.join(HERE, script), *map(str, args)]).returncode
 
 
+def intraday(a):
+    """12・14・16・18・20時: download the live page, fetch today's reservations only, refresh the results."""
+    os.makedirs(WORK, exist_ok=True)
+    os.chmod(WORK, 0o700)
+    today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
+    w = os.path.join(WORK, 'intraday')
+    cur, new = os.path.join(w, 'current.html'), os.path.join(WORK, 'new.html')
+    os.makedirs(w, exist_ok=True)
+    if a.html:
+        shutil.copy(a.html, cur)
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+        import netlify
+        netlify.download(config.SITE, cur)
+    if page.get_consts(open(cur, encoding='utf-8').read())['TODAY']['date'] != f'{today.month}/{today.day}':
+        sys.exit(f'STOP: the live page has no forecast for {today} yet (the 0:30 run did not publish); nothing to refresh')
+    if py('fetch.py', '--from', today, '--to', today, '--kinds', 'schedule', '--exact', '--work', w):
+        sys.exit('STOP: fetching KOS data failed; nothing built')
+    if py('build.py', '--intraday', '--html', cur, '--work', w, '--out', new, '--today', today):
+        sys.exit(1)
+    npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
+    if subprocess.run(['node', os.path.join(HERE, 'check_render.js'), new], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
+        sys.exit('STOP: the page does not render cleanly; not ready to publish')
+    print('READY (intraday): $WORK/new.html')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--today', help='JST date of the new day (default: today in JST)')
     ap.add_argument('--html', help='use this page instead of downloading it from Netlify')
     ap.add_argument('--summary', help='$WORK/summary_todo.json after its "text" was written: makes the 月まとめ tab')
+    ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only today\'s results (no forecast change)')
     a = ap.parse_args()
     os.umask(0o077)
+    if a.intraday:
+        return intraday(a)
     os.makedirs(WORK, exist_ok=True)
     os.chmod(WORK, 0o700)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()

@@ -75,14 +75,32 @@ def landing(deploy, summary=None, today=None):
         print('DONE landing: https://naaclinic.netlify.app')
 
 
+def landing_intraday(deploy, today=None):
+    """日中の更新 (12/14/16/18/20時 JST): only today's results on naaclinic; the 0:30 forecast is not touched."""
+    w = os.path.join(BASE, 'landing')
+    code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), '--intraday', *(['--today', today] if today else []),
+               env=dict(os.environ, WORK=w))
+    if code:
+        sys.exit('STOP landing (intraday): nothing deployed')
+    now = dt.datetime.now(JST).strftime('%H:%M')
+    if deploy:
+        netlify.deploy('naaclinic', os.path.join(w, 'new.html'), f'{now}時点の実績を反映（日中の自動更新）', require_password=False)
+        print(f'DONE landing (intraday {now}): https://naaclinic.netlify.app')
+    else:
+        print('built and checked (not deployed):', os.path.join(w, 'new.html'))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only', choices=['counselor', 'landing'])
     ap.add_argument('--no-deploy', action='store_true')
+    ap.add_argument('--intraday', action='store_true', help='日中の更新 of landing only (12/14/16/18/20時); counselor is not run')
     ap.add_argument('--today', help='landing, for tests: JST date to treat as today (the 0:30 run makes the forecast for it)')
     ap.add_argument('--summary', help='landing: summary_todo.json with the 月まとめ sentences written (after exit 4)')
     a = ap.parse_args()
     os.umask(0o077)
+    if a.intraday:
+        return landing_intraday(not a.no_deploy, a.today)
     for name in ([a.only] if a.only else ENABLED):
         if name == 'landing':
             landing(not a.no_deploy, a.summary, a.today)

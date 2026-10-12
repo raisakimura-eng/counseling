@@ -115,6 +115,7 @@ def main():
     ap.add_argument('--work', default=os.environ.get('WORK', '/tmp/sales-work/landing'))
     ap.add_argument('--kinds', default=','.join(KINDS))
     ap.add_argument('--refresh', action='store_true', help='re-fetch closed months too')
+    ap.add_argument('--exact', action='store_true', help='fetch only --from..--to (日中の更新: just today), not whole months')
     ap.add_argument('--visitors', metavar='YYYY-MM', help='also fetch birth dates of visitors with reservations from this month on')
     a = ap.parse_args()
     os.umask(0o077)
@@ -133,9 +134,10 @@ def main():
             closed = next_month(dt.date.fromisoformat(ym + '-01')) <= today - dt.timedelta(days=3)
             if closed and os.path.exists(out) and not a.refresh:
                 continue
-            # always fetch the whole month (from the 1st) so the file is self-contained
-            data = fetch_kind(cli, kind, dt.date.fromisoformat(ym + '-01'), e)
-            json.dump({'kind': kind, 'from': utc(dt.date.fromisoformat(ym + '-01')), 'to': utc(e),
+            # normally the whole month (from the 1st) so the file is self-contained; --exact: only --from..--to
+            s0 = s if a.exact else dt.date.fromisoformat(ym + '-01')
+            data = fetch_kind(cli, kind, s0, e)
+            json.dump({'kind': kind, 'from': utc(s0), 'to': utc(e),
                        'fetchedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'data': data}, open(out, 'w'), ensure_ascii=False)
             print(f'{kind} {ym}: {len(data)} rows', flush=True)
