@@ -10,7 +10,7 @@ Excel エクスポート（施術・購入・満足度調査）ではなく KOS 
 ページは `const EMBED = {T, P, S, files}` に **集計前の行**（Excel の3ファイルと同じ形）を持ち、集計・表示はページの JS
 （`compute()` / `build()` / `render()`）がする。ページ内の「Excelを読み込む」で3ファイルを選んでも同じ JS で表示できる（この読み込みはそのまま残す）。
 設定はページの JS の定数 `DOCTORS`（医師＝看護師の集計から外す）、`NON_STAFF`（非個人名）、`ALIAS`（逆順・短い名前の寄せ先）、
-`MENTION`（「輝いていたスタッフ」の自由記述で数える短い呼び名）。`build.py` は EMBED の1行だけを差し替え、CSS / JS / 設定には触れない。
+`MENTION`（「輝いていたスタッフ」の自由記述で数える短い呼び名）。`build.py` は EMBED の1行と `DOCTORS`・`ALIAS`・`MENTION` の行だけを書き換え、CSS / ほかの JS には触れない。
 
 ページの「集計ルール」:
 - 施術件数：施術データのグループ第1階層（施術者）が看護師のメニュー件数。商品のないカウンセリング行は除外。施術患者数は「日付×患者」のユニーク数。
@@ -34,7 +34,7 @@ P＝購入項目統計（施術外品目＝etceteraProduct*、患者分類＝vis
 | `page.py` | EMBED と設定の読み書き、ページの JS の集計の Python 再現（`Calc`、`views()`） |
 | `build.py` | 公開中の HTML ＋ API → 新しい HTML（EMBED だけ差し替え）。止まる条件・人の判断が要る名前の警告 |
 | `verify.py` | ページの全表示（全期間・各日 × VOC 2種）の数値を API から作り直した値と突き合わせる（`--table`・`--raw`・`--strict`・`--expect`） |
-| `check_render.js` | Chromium で全表示・並べ替え・行選択・散布図・Excel 欄を操作して JS エラー／NaN を検出。`--expect` で画面の数値を `verify.py` の値と照合 |
+| `check_render.js` | Chromium で全表示・並べ替え・行選択・散布図（重なった点も全部、要素に click/mousemove を送る）・ツールチップ・Excel 欄を操作して JS エラー／NaN を検出。`--expect` で画面の数値を `verify.py` の値と照合 |
 
 ## 使い方
 
@@ -60,19 +60,23 @@ python3 -I pipeline/sales/nurse/verify.py $W/current.html $W --table --raw
   指名件数が2件超ずれる／今のページが Excel 版なのに `--accept-closed-month-changes` が無い（または API 版なのに有る）。
 - 公開（Netlify deploy）はこのパイプラインではしない（`daily_sales.py` がする）。
 
-## 人の判断が要るもの（build.py の WARNING。`--strict-new-staff` で止める）
+## 設定の定数と人の判断が要るもの
 
-Claude の判断（コメントの分類など）は日次では要らない。名前の設定だけは人が決めて、**ページの JS の定数を直して一度公開**する
-（`build.py` は公開中のページを毎回ダウンロードして EMBED だけ替えるので、直した定数はそのまま残る）。
+`build.py` は毎回、ページの定数 `DOCTORS`・`ALIAS`・`MENTION` を「今のページの値 ＋ `build.PAGE_ADD` ＋ `data/staff_roles.csv` で
+ダッシュボード職種が「医師」の人（`DOCTORS`）」に書き直す（足すだけで消さない。同じ入力なら何度実行しても同じ）。
+設定を変えるときは `PAGE_ADD` を直す。日次の実行でもそのまま維持される。`staff_roles.csv` は他のダッシュボードと共有なので、ここからは変えない。
 
-- 医師なのに `DOCTORS` に無い → その人が看護師として表示される。`DOCTORS` に足す。
-  （2026-10 時点: 退職した医師 **渡辺一惠** が無い。10月は「全回答」で1件の評価が看護師として出る。9月を表示すると施術96件が看護師扱いになる）
-- `data/staff_roles.csv` に無い名前（新しい人、または表記ゆれ）→ csv に足す／表記ゆれなら `ALIAS`。
-  （2026-10 時点: **吉澤沙也加**（施術の評価の対象。`MENTION` にはいる）が csv に無い）
-- csv で看護師でも医師でもない人が施術者 → `NON_STAFF` に足すか判断。
-- 指名料「看護師_○○」が期間の看護師の誰にも当たらない → `ALIAS` に短い名前を足す（例 `'神田':'神田令'`）。
-- 今のページにも `MENTION` にも無い看護師 → KOS の表示名が「名 姓」の逆順なら `ALIAS`、短い呼び名（姓だけ等）で言及されそうなら `MENTION` に足す
-  （例: 阿部彩乃は 10月から施術しているが `MENTION` に無い。フルネームでの言及だけ数える）。
+2026-10-12 のオーナー決定（`PAGE_ADD`）:
+- **医師は表示・集計しない。** 医師 = `DOCTORS` ＋ csv の「医師」（渡辺一惠・渡邊莉子・藤中玲が自動で加わる）。医師が看護師として出る経路
+  （施術者・施術の評価対象・指名の推定・医師施術の担当）はすべて `isDoctor` で外れる。指名料は「看護師_」の品目だけ。
+- **吉澤沙也加 = 神田令**（同じ人）。`ALIAS` で 吉澤沙也加・吉澤 → 神田令、`MENTION` の神田令に「吉澤」を追加。
+- **阿部彩乃**の `MENTION` に「阿部」。
+
+Claude の判断（コメントの分類など）は日次では要らない。build.py の WARNING（`--strict-new-staff` で止める）が出たら人が決めて `PAGE_ADD` に足す:
+- `data/staff_roles.csv` に無い名前（新しい人、または表記ゆれ → `ALIAS`）。新しい医師が csv にまだ無いと看護師として出るので、csv への追加か `PAGE_ADD['DOCTORS']`。
+- csv で看護師でも医師でもない人が施術者 → `NON_STAFF` に足すか判断（`NON_STAFF` はページで直す）。
+- 指名料「看護師_○○」が期間の看護師の誰にも当たらない → `ALIAS` に短い名前を足す。
+- 今のページにも `MENTION` にも無い看護師 → 逆順の名前なら `ALIAS`、短い呼び名で言及されそうなら `MENTION`。
 
 ## 照合結果（2026-10-12、公開版 = 10/1〜10/10 の Excel 版、`verify.py --table --raw`）
 

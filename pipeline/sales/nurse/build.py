@@ -10,7 +10,8 @@
   その期間に施術データがまだ1件も無いとき（月初が休診日など）は、前月の1日からにする（ページは
   施術の無い期間を表示できないため）。
 - --fetch: 期間の月を API から取り直す（--fetch-all も同じ）。付けなければ手元の WORK/raw だけで作る。
-- 書き換えるのは `const EMBED = {...};` の1行だけ（CSS / JS / DOCTORS・NON_STAFF・ALIAS・MENTION には触れない）。
+- 書き換えるのは `const EMBED = {...};` の1行と、設定の定数 DOCTORS・ALIAS・MENTION（CSS / ほかの JS には触れない）。
+  定数は「今のページの値 + PAGE_ADD + staff_roles.csv でダッシュボード職種が医師の人（DOCTORS）」。足すだけで消さない。
   ページに日付の入った固定の文は無い（期間や未取込の日は JS が EMBED から表示する）。
 
 止まる条件（何も書き出さない）:
@@ -70,6 +71,30 @@ def drift(old_v, new_v, settled):
             out.append(f"{day}: 施術件数 {ta['cnt']} -> {tb['cnt']}")
         if ta['nom'] is not None and tb['nom'] is not None and abs(tb['nom'] - ta['nom']) > 2:
             out.append(f"{day}: 指名件数 {ta['nom']} -> {tb['nom']}")
+    return out
+
+
+# ページの JS 定数に毎回足す設定（既にあるものは残す。2026-10-12 オーナー決定）。
+# DOCTORS には data/staff_roles.csv のダッシュボード職種「医師」も自動で足す（csv は他のダッシュボードと共有。ここからは変えない）。
+PAGE_ADD = {
+    'DOCTORS': ['渡辺一惠'],                                   # 退職した医師（csv でも医師）。看護師に含めない
+    'ALIAS': {'吉澤沙也加': '神田令', '吉澤': '神田令'},        # 同じ人。表示は神田令にまとめる
+    'MENTION': {'阿部彩乃': ['阿部'], '神田令': ['吉澤']},      # 輝き言及の短い呼び名
+}
+
+
+def merged_config(cfg):
+    """ページの定数 + PAGE_ADD + staff_roles.csv の医師（ダッシュボード職種「医師」）。既にあるものは消さない。"""
+    add = PAGE_ADD
+    csv_doctors = [page.norm(r['氏名']) for r in csv.DictReader(open(STAFF_CSV, encoding='utf-8'))
+                   if r['ダッシュボード職種'] == '医師']
+    out = dict(cfg)
+    out['DOCTORS'] = list(dict.fromkeys(cfg['DOCTORS'] + [page.norm(n) for n in add.get('DOCTORS', [])] + csv_doctors))
+    out['ALIAS'] = {**cfg['ALIAS'], **add.get('ALIAS', {})}
+    mention = {k: list(v) for k, v in cfg['MENTION'].items()}
+    for k, v in add.get('MENTION', {}).items():
+        mention[k] = list(dict.fromkeys(mention.get(k, []) + v))
+    out['MENTION'] = mention
     return out
 
 
@@ -133,7 +158,8 @@ def main():
     until = dt.date.fromisoformat(a.until) if a.until else dt.datetime.now(JST).date() - dt.timedelta(days=1)
     d0 = dt.date.fromisoformat(a.d0) if a.d0 else month_start(until)
     html = page.read_html(a.html)
-    cfg = page.config(html)
+    old_cfg = page.config(html)
+    cfg = merged_config(old_cfg)
     old = page.get_embed(html)
     o0, o1 = verify.page_period(old)
     if until < o1:
@@ -160,10 +186,14 @@ def main():
     if not has_treatment(new):
         sys.exit(f'STOP: no treatment data in {d0}..{until} (the page cannot show an empty period)')
 
-    old_v, new_v = page.views(old, cfg), page.views(new, cfg)
+    old_v, new_v = page.views(old, old_cfg), page.views(new, cfg)
+    if cfg != old_cfg:
+        for k in ('DOCTORS', 'ALIAS', 'MENTION'):
+            if cfg[k] != old_cfg[k]:
+                print(f'page constant {k} updated (build.PAGE_ADD / staff_roles.csv)')
     settled = {d for (d, _) in old_v if d != 'ALL' and d <= (until - dt.timedelta(days=2)).isoformat()
                and d >= d0.isoformat()}
-    dr = drift(old_v, new_v, settled)
+    dr = drift(page.views(old, cfg) if cfg != old_cfg else old_v, new_v, settled)   # データの変化だけを見る（設定は同じにそろえる）
     if dr and not a.accept_closed_month_changes:
         sys.exit('STOP: settled days differ from the live page more than later edits would explain '
                  '(check with verify.py --table):\n  ' + '\n  '.join(dr))
@@ -181,7 +211,7 @@ def main():
     if warn and a.strict_new_staff:
         sys.exit('STOP: names that need a human decision (see WARNING lines; README「人の判断が要るもの」)')
 
-    out = page.set_embed(html, new)
+    out = page.set_config(page.set_embed(html, new), cfg)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(out)
     t = new_v[('ALL', 'same')][0]

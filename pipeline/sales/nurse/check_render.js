@@ -13,7 +13,8 @@ const BAD = /\bNaN\b|\bundefined\b|\bInfinity\b|\bnull\b/;
 async function scan(page, where, errs) {
   const r = await page.evaluate((src) => {
     const re = new RegExp(src);
-    const t = document.querySelector('.wrap').innerText;
+    const tip = document.getElementById('tip');
+    const t = document.querySelector('.wrap').innerText + '\n' + (tip && !tip.hidden ? tip.innerText : '');
     const m = t.match(re);
     if (m) return 'text: ' + t.slice(Math.max(0, m.index - 40), m.index + 40).replace(/\s+/g, ' ');
     for (const el of document.querySelectorAll('svg *')) {
@@ -92,15 +93,28 @@ function diff(where, got, exp, errs) {
       await scan(page, `select ${n}`, errs);
       await page.click(`#board tbody tr[data-n="${n}"]`);
     }
-    const pt = await page.$eval('#scatter .pt', e => e.dataset.n).catch(() => null);
-    if (pt) {
-      for (let k = 0; k < 2; k++) { await page.click(`#scatter .pt[data-n="${pt}"]`); await scan(page, 'scatter click', errs); }
+    // 散布図: 点は重なることがある（データが増えれば普通）ので、座標クリックではなく各点の要素に click を送る。
+    // 全部の点で 選択→表示確認→解除。ホバー（ツールチップ）も同じく要素に mousemove を送って確認する。
+    const pts = await page.$$eval('#scatter .pt', e => e.map(x => x.dataset.n));
+    for (const n of pts) {
+      for (let k = 0; k < 2; k++) {
+        const ok = await page.evaluate((name) => {
+          const el = [...document.querySelectorAll('#scatter .pt')].find(x => x.dataset.n === name);
+          if (!el) return false;
+          el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 100, clientY: 100 }));
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+          return true;
+        }, n);
+        if (!ok) errs.push(`scatter point ${n} disappeared after re-render`);
+        await scan(page, `scatter ${n}`, errs);
+      }
     }
+    if (pts.length && !(await page.$$eval('#board tbody tr.sel', r => r.length === 0))) errs.push('scatter click left a row selected');
     await page.click('#loadBtn');
     if (await page.$eval('#drop', e => e.hidden)) errs.push('Excel drop area did not open');
     await page.click('#loadBtn');
     const uniq = [...new Set(errs)];
-    console.log(`${uniq.length ? 'NG' : 'OK'} ${f} (${views} views${expect ? `, ${compared} compared with --expect` : ''}, ${rows.length} rows selected)` +
+    console.log(`${uniq.length ? 'NG' : 'OK'} ${f} (${views} views${expect ? `, ${compared} compared with --expect` : ''}, ${rows.length} rows selected, ${pts.length} scatter points)` +
       (uniq.length ? '\n  ' + uniq.slice(0, 15).join('\n  ') : ''));
     failed += uniq.length ? 1 : 0;
     await page.close();

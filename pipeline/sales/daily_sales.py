@@ -29,7 +29,7 @@ import netlify  # noqa: E402
 
 JST = dt.timezone(dt.timedelta(hours=9))
 BASE = os.environ.get('SALES_WORK', '/tmp/sales-work')
-ENABLED = ['counselor', 'landing']
+ENABLED = ['counselor', 'landing', 'nurse']
 
 
 def run(*args, env=None):

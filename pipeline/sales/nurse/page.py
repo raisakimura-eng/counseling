@@ -55,6 +55,23 @@ def config(html):
                 ALIAS=_js_literal(html, 'ALIAS', '}'), MENTION=_js_literal(html, 'MENTION', '}'))
 
 
+def _js(v):
+    return json.dumps(v, ensure_ascii=False, separators=(',', ':')).replace('"', "'")
+
+
+def set_config(html, cfg):
+    """DOCTORS・ALIAS・MENTION の定数の行を cfg の内容で書き直す（ほかの JS には触れない）。"""
+    subs = [(r"^const DOCTORS = \[.*?\];", 'const DOCTORS = ' + _js(cfg['DOCTORS']) + ';'),
+            (r"^const ALIAS = \{.*?\};", 'const ALIAS = ' + _js(cfg['ALIAS']) + ';'),
+            (r"^const MENTION = \{.*?\n\};", 'const MENTION = { // extra tokens for 輝きスタッフ\n  '
+             + ','.join(f'{_js(k)}:{_js(v)}' for k, v in cfg['MENTION'].items()) + '\n};')]
+    for pat, rep in subs:
+        html, n = re.subn(pat, lambda _: rep, html, count=1, flags=re.M | re.S)
+        if n != 1:
+            raise ValueError(f'constant not found: {pat[:20]}')
+    return html
+
+
 # ------------------------------------------------------------- JS の compute / build の再現
 
 def norm(s):
