@@ -20,7 +20,6 @@ What changes (everything else on the page is kept):
 The current month's sales target must be in --targets, otherwise the build stops (exit code 3).
 """
 import argparse
-import config  # noqa: E402
 import datetime as dt
 import json
 import os
@@ -30,6 +29,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import aggregate  # noqa: E402
+import config  # noqa: E402
 import page  # noqa: E402
 from data import JST, Raw, dlabel, month_days, wd  # noqa: E402
 
