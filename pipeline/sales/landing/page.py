@@ -270,6 +270,11 @@ SUMMARY_VIEW_X = r'''
 '''
 
 JS_EDITS_2 = [
+    # a ratio with a zero denominator (a day or month without visits yet) is shown as 「—」, not Infinity / NaN
+    ("  const yen = v => Math.round(Math.abs(v)).toLocaleString('ja-JP');",
+     "  const yen = v => isFinite(v) ? Math.round(Math.abs(v)).toLocaleString('ja-JP') : '—';", 1),
+    ("  const pct = (v, d = 1) => (v * 100).toFixed(d) + '%';",
+     "  const pct = (v, d = 1) => isFinite(v) ? (v * 100).toFixed(d) + '%' : '—';", 1),
     ("  function hoursChart(){", SUMMARY_VIEW_X + "\n  function hoursChart(){", 1),
     ("    if (v === 'oct' && !DAYS_CUR.length) v = 'today';\n",
      "    if (v === 'oct' && !DAYS_CUR.length) v = 'today';\n"

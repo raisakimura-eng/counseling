@@ -76,13 +76,17 @@ def main():
     else:
         base_ym = config.LEGACY_SUMMARY
     need_summary = base_ym != config.LEGACY_SUMMARY and base_ym not in {x['key'] for x in consts.get('SUMMARIES', [])}
+    # published days not yet restated to the current 着地結果 definition need their month's data too
+    restate_base = any('Cex' not in r for r in consts.get('DAYS_BASE', []))
     if need_summary:
         # the まとめ compares with the two months before: fetch them too (closed months are cached in $WORK)
         y, m = map(int, base_ym.split('-'))
         k = y * 12 + m - 1 - 2
         first = dt.date(k // 12, k % 12 + 1, 1)
+    elif restate_base or today.day == 1:
+        first = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1)  # the previous month
     else:
-        first = (yday.replace(day=1) if today.day == 1 else today.replace(day=1))
+        first = today.replace(day=1)
     month_end = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
     vis_from = base_ym if need_summary else first.strftime('%Y-%m')
     rc = py('fetch.py', '--from', first, '--to', today, '--future-to', month_end, '--work', WORK, '--visitors', vis_from)
@@ -104,6 +108,9 @@ def main():
     if today.day != 1 and (not c['DAYS_CUR'] or c['DAYS_CUR'][-1]['date'] != f'{yday.month}/{yday.day}'):
         problems.append('yesterday is missing from the month')
     last = (c['DAYS_CUR'] or c['DAYS_BASE'])[-1]
+    for r in c['DAYS_BASE'] + c['DAYS_CUR']:
+        if r['visN'] and not r['C']:
+            problems.append(f"{r['date']}: visits but 着地結果 0 (KOS data missing in $WORK?)")
     if last['bookN'] and not last['visN']:
         problems.append(f"{last['date']}: reservations but no completed visit (KOS statuses not updated yet?)")
     if last['visN'] and not last.get('payC'):

@@ -81,8 +81,9 @@ def base_from_page(consts):
     """Parameters of the reference month, read from the page's own data (DAYS_BASE, MONTH)."""
     R = consts['DAYS_BASE']
     core = lambda r: r['C'] - r.get('Cex', 0)  # noqa: E731  (the forecast does not include excluded visits)
-    band = statistics.mean(abs(core(r) - r['Amorning']) / r['Amorning'] for r in R)
-    bias = sum(core(r) for r in R) / sum(r['Amorning'] for r in R) - 1
+    div = aggregate.div
+    band = statistics.mean(div(abs(core(r) - r['Amorning']), r['Amorning']) for r in R)
+    bias = div(sum(core(r) for r in R), sum(r['Amorning'] for r in R), 1) - 1
     sd_wd = {}
     for w in '月火水木金土日':
         rr = [r for r in R if r['wd'] == w]
@@ -100,11 +101,11 @@ def base_from_page(consts):
         o = [x[3] for x in M if x is not m and (wds[x[0]] == wds[m[0]] or not same)]
         return statistics.mean(o)
     return {'coef': consts['TODAY']['coef'], 'band': round(band, 3), 'bias': round(bias, 3),
-            'fullBias': round(statistics.mean((core(r) - r['Aold']) / r['Aold'] for r in R), 3),
+            'fullBias': round(statistics.mean(div(core(r) - r['Aold'], r['Aold']) for r in R), 3),
             'sd': {'allN': round(statistics.mean(r['sd']['n'] for r in R), 1), 'allPaid': round(sum(r['sd']['paid'] for r in R) / len(R))},
             'sd_wd': sd_wd, 'wavg': {w: round(statistics.mean(v)) for w, v in wk.items()},
-            'acc': {'wk': round(statistics.mean(abs(m[3] - loo(m, True)) / m[3] for m in M if sum(1 for x in M if wds[x[0]] == wds[m[0]]) > 1), 3),
-                    'flat': round(statistics.mean(abs(m[3] - loo(m, False)) / m[3] for m in M), 3)}}
+            'acc': {'wk': round(statistics.mean(div(abs(m[3] - loo(m, True)), m[3]) for m in M if sum(1 for x in M if wds[x[0]] == wds[m[0]]) > 1), 3),
+                    'flat': round(statistics.mean(div(abs(m[3] - loo(m, False)), m[3]) for m in M), 3)}}
 
 
 def seed(consts):
@@ -192,6 +193,8 @@ def build(html, raw, today, targets, summary_text=None):
     for e in days_cur:
         if dlabel(e) in have and e != yday:
             continue
+        if not raw.sched.get(e):
+            raise SystemExit(f'STOP: no KOS reservation data for {e} in $WORK/raw; fetch it first')
         snap = T0.get('snap') if T0.get('date') == dlabel(e) else None
         m = T0['cur'] if T0.get('date') == dlabel(e) else morning.get(dlabel(e))
         recs[dlabel(e)] = aggregate.day_record(raw, e, snap=snap, morning=m, pay_based=True)
@@ -260,6 +263,9 @@ def restate(raw, rec, d):
     """着地結果（来院ベース）を「除外来院の自費分を含む」定義にそろえる。足す額 = API の新しい定義の値 − 公開値
     (the published value already held part of it on days where the page had kept a paying influencer / staff visit)."""
     from data import excluded, paid
+    if not raw.sched.get(d):
+        raise SystemExit(f'STOP: no KOS reservation data for {d} in $WORK/raw (needed to restate {rec["date"]}); '
+                         f'fetch that month first (daily.py does this)')
     x = aggregate.Day(raw, d)
     exv = [r for r in x.excl if r['reservationStatus'] in ('COMPLETED', 'IN_PROGRESS')]
     amount = sum(paid(r) for r in exv)

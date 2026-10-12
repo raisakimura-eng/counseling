@@ -19,6 +19,11 @@ def pct1(v):
     return f'{v * 100:.1f}%'
 
 
+def div(a, b, default=0):
+    """a / b, or DEFAULT when b is 0 (a day or month without visits / reservations)."""
+    return a / b if b else default
+
+
 def _avg(xs):
     xs = [x for x in xs if x > 0]
     return sum(xs) / len(xs) if xs else 0
@@ -424,11 +429,11 @@ def base_stats(raw, base_days, base_records):
         o = [allv[e] for e in base_days if e != d and (wd(e) == wd(d) or not same_wd)]
         return statistics.mean(o)
     peers = [d for d in base_days if sum(1 for e in base_days if wd(e) == wd(d)) > 1]  # a weekday seen once has no peer
-    acc = {'wk': round(statistics.mean(abs(allv[d] - loo(d, True)) / allv[d] for d in peers), 3) if peers else None,
-           'flat': round(statistics.mean(abs(allv[d] - loo(d, False)) / allv[d] for d in base_days), 3)}
+    acc = {'wk': round(statistics.mean(div(abs(allv[d] - loo(d, True)), allv[d]) for d in peers), 3) if peers else None,
+           'flat': round(statistics.mean(div(abs(allv[d] - loo(d, False)), allv[d]) for d in base_days), 3)}
     R = base_records
-    band = statistics.mean(abs(r['C'] - r['Amorning']) / r['Amorning'] for r in R)
-    bias = sum(r['C'] for r in R) / sum(r['Amorning'] for r in R) - 1
+    band = statistics.mean(div(abs(r['C'] - r['Amorning']), r['Amorning']) for r in R)
+    bias = div(sum(r['C'] for r in R), sum(r['Amorning'] for r in R), 1) - 1
     sd = {'allN': round(statistics.mean(r['sd']['n'] for r in R), 1), 'allPaid': round(sum(r['sd']['paid'] for r in R) / len(R))}
     sd_wd = {}
     for w in '月火水木金土日':
@@ -663,7 +668,7 @@ def month_summary(raw, ym, recs, target, nxt):
         rr = [r for r in recs if r['wd'] == w]
         dd = [d for d in days if wd(d) == w]
         if rr:
-            week.append([w, round(statistics.mean(allv[d] for d in dd)), round(sum(map(core, rr)) / sum(r['Amorning'] for r in rr) - 1, 3)])
+            week.append([w, round(statistics.mean(allv[d] for d in dd)), round(div(sum(map(core, rr)), sum(r['Amorning'] for r in rr), 1) - 1, 3)])
 
     def agg(key, order=None):
         g = {}
@@ -681,8 +686,8 @@ def month_summary(raw, ym, recs, target, nxt):
     S = {'key': ym, 'y': y, 'm': m, 'label': f'{m}月', 'total': total, 'target': target, 'days': n,
          'perdayAll': round(total / n), 'M': M, 'C': C, 'plusDays': sum(1 for r in recs if r['C'] > r['Amorning']),
          'sd': {'n': round(statistics.mean(r['sd']['n'] for r in recs), 1), 'paid': sum(r['sd']['paid'] for r in recs)},
-         'same': round(sum(r['sameN'] for r in recs) / sum(r['bookN'] for r in recs), 3),
-         'canc': round(sum(r['cancN'] for r in recs) / sum(r['fullN'] for r in recs), 3),
+         'same': round(div(sum(r['sameN'] for r in recs), sum(r['bookN'] for r in recs)), 3),
+         'canc': round(div(sum(r['cancN'] for r in recs), sum(r['fullN'] for r in recs)), 3),
          'months': months, 'week': week, 'ch': agg('ch'), 'ages': agg('ages', config.AGE_BANDS),
          'top': extra(raw, days)['trTop'][:5], 'morningPerDay': round(M / n), 'totalVisit': sum(allv.values()),
          'pay': {k: pb[k] for k in ('card', 'cash', 'pre', 'cancel', 'refund', 'cancelN')},
@@ -703,7 +708,7 @@ def summary_facts(S):
     return {
         '目標達成率': round(S['total'] / S['target'], 3) if S['target'] else None,
         '日割り目標（1日あたり）': round(per_t) if per_t else None,
-        '実決済÷朝の予想−1': round(S['C'] / S['M'] - 1, 3),
+        '実決済÷朝の予想−1': round(div(S['C'], S['M'], 1) - 1, 3),
         '前2か月との比較（古い順）': {keys[k]: [m[k] for m in S['months']] for k in keys},
         '前月からの変化': {keys[k]: round(cur[k] - prv[k], 3) for k in keys},
         '曜日別（売上の1日平均、日割り目標との差、上乗せ率）': [[w[0], w[1], (w[1] - round(per_t)) if per_t else None, w[2]] for w in S['week']],

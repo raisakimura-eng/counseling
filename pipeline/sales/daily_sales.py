@@ -56,9 +56,9 @@ def counselor(deploy):
         print('built and checked (not deployed):', new)
 
 
-def landing(deploy, summary=None):
+def landing(deploy, summary=None, today=None):
     w = os.path.join(BASE, 'landing')
-    code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), *(['--summary', summary] if summary else []),
+    code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), *(['--summary', summary] if summary else []), *(['--today', today] if today else []),
                env=dict(os.environ, WORK=w))
     if code == 4:
         todo = os.path.join(w, 'summary_todo.json')
@@ -79,12 +79,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only', choices=['counselor', 'landing'])
     ap.add_argument('--no-deploy', action='store_true')
+    ap.add_argument('--today', help='landing, for tests: JST date to treat as today (the 0:30 run makes the forecast for it)')
     ap.add_argument('--summary', help='landing: summary_todo.json with the 月まとめ sentences written (after exit 4)')
     a = ap.parse_args()
     os.umask(0o077)
     for name in ([a.only] if a.only else ENABLED):
         if name == 'landing':
-            landing(not a.no_deploy, a.summary)
+            landing(not a.no_deploy, a.summary, a.today)
         else:
             counselor(not a.no_deploy)
 
