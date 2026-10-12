@@ -67,6 +67,8 @@ def main():
     ap.add_argument('--work', default=os.environ.get('WORK', '/tmp/sales-work/landing'))
     ap.add_argument('--json')
     ap.add_argument('--all-fields', action='store_true', help='also compare the 客単価 indicators')
+    ap.add_argument('--strict', action='store_true', help='also fail (exit 2) when a 決済ベース day of 売上目標の進捗, or the '
+                    '着地結果 (来院ベース) / 決済ベース of a day built by this pipeline, differs from the API')
     a = ap.parse_args()
     raw = Raw(a.work)
     html = open(a.html, encoding='utf-8').read()
@@ -102,6 +104,16 @@ def main():
         if lbl in t_rows and t_rows[lbl][2] != aggregate.pay_day(raw, d):
             bad.append(f'{lbl} {t_rows[lbl][2]:,}→{aggregate.pay_day(raw, d):,}')
     print(f'== TARGET actual rows (決済ベース): {len(t_rows) - len(bad)}/{len(t_rows)} match' + (' — ' + ', '.join(bad) if bad else ''))
+    if a.strict:
+        if bad:
+            fatal.append('TARGET actual rows differ: ' + ', '.join(bad))
+        for key in ('DAYS_BASE', 'DAYS_CUR'):
+            for r in report[key]['days']:
+                p = next(x for x in c[key] if x['date'] == r['date'])
+                if 'Cex' in p:  # built or restated by this pipeline: C and payC must reproduce
+                    for f in ('C', 'payC'):
+                        if f in r['diff']:
+                            fatal.append(f"{r['date']} {f} {r['diff'][f][0]}→{r['diff'][f][1]}")
     mc = aggregate.month_chart(raw, base_days)
     mbad = [f'{p[0]}' for p, q in zip(c['MONTH'], mc) if p != q]
     print(f'== MONTH: {len(mc) - len(mbad)}/{len(mc)} rows match' + (' — differ: ' + ', '.join(mbad) if mbad else ''))

@@ -61,6 +61,9 @@ JS_EDITS = [
     ("  const VIEWS = ['today', 'oct', 'past', 'sum'];",
      "  document.getElementById('vt-oct').textContent = MON.c + '月分'; document.getElementById('vt-past').textContent = MON.b + '月分';\n"
      "  const VIEWS = ['today', 'oct', 'past', 'sum'];", 1),
+    # 客単価の前月平均: 来院ベースの決済（決済ベースで上書きされる前の値）から、除外来院の自費分を引いた額 ÷ 来院数
+    ("const V = DAYS_SEP.reduce((a, d) => a + d.visN, 0), C = DAYS_SEP.reduce((a, d) => a + d.C, 0);",
+     "const V = DAYS_SEP.reduce((a, d) => a + d.visN, 0), C = DAYS_SEP.reduce((a, d) => a + (d.Cvisit ?? d.C) - (d.Cex || 0), 0);", 1),
     # a month with a single finished day: the line charts divided by (days - 1)
     ("(W - left - right) * i / (DAYS.length - 1)", "(W - left - right) * i / Math.max(1, DAYS.length - 1)", 1),
     # on the 1st of a month the current month has no finished day yet: hide its tab instead of failing
@@ -77,6 +80,11 @@ GEN_WRAP = {
     'cmpFoot': '9/27〜9/29は実際に朝お出しした予想、9/1〜9/26は予約登録日から朝の時点の予約を再現しています。',
     'tbaseSub': ('<h2 id="h-tbase">この予想の前提</h2><span class="muted">', '9/1〜9/26の実績から算出'),
     'monthHead': '9月の予約金額と決済額（来院者のみ）',
+    # 「予測ロジックの見直し案」の2つ目以降: 数値だけ生成（考察文はそのまま）
+    'fixFill': ('<b>メニュー未入力の補完単価</b><span>', '初診 23,376円、再診 7,349円'),
+    'fixMult': ('<b>予約金額から決済への倍率</b><span>', '初診 1.01、再診 1.08'),
+    'fixMultNote': ('</span></div><p>', 'メニュー入力済みの来院者の9月平均です。'),
+    'fixHigh': ('6万円を超える初診予約は成約の振れ幅が大きいため', '（9/1は4件、計375,500円が決済0円）'),
 }
 GEN_BLOCK = {  # id of the element whose whole inner text is generated
     'footPast': re.compile(r'(<footer id="footPast"[^>]*>)(.*?)(</footer>)', re.S),

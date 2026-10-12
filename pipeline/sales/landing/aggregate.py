@@ -267,11 +267,33 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'AmSrc': 'snapshot' if morning is not None else 'recon',
     }
     rec['factors'] = factors(rec, x, vis, nomenu, zeros, ups, dns, sameT, vr)
+    exv = [r for r in x.excl if r['reservationStatus'] in config.VISITED]
+    add_excluded(rec, sum(paid(r) for r in exv), len(exv), sum(1 for r in exv if paid(r) > 0))
     rec['push'] = hpb_sold(raw, d, fetched_hhmm)
     if pay_based:
         pb = pay_bridge(raw, d)
         rec['payC'] = pb['total']
         rec['payNote'] = pay_note(pb, prep, C)
+    return rec
+
+
+def add_excluded(rec, amount, n, n_paid, step=None):
+    """スタッフ・インフルエンサー等の来院: 来院数・予約数・客単価からは除いたまま、その来院で実際に支払われた
+    金額（自費分）を着地結果（来院ベース, C）に足す。差の内訳に「除外来院の決済」の段を1つ加える。
+    STEP: amount actually added to C (restating a published day whose C already held part of it)."""
+    step = amount if step is None else step
+    rec['Cex'] = amount
+    rec['exN'] = n
+    rec['C'] += step
+    if step:
+        i = len(rec['wf']) - 1
+        rec['wf'].insert(i, ['除外来院の決済', step])
+        rec['wf'][-1][1] = rec['C']
+        rec['wfnotes'].insert(i, f'スタッフ・PR枠{n}件のうち支払い{n_paid}件')
+        rec['factors'].append({'k': '除外来院の決済', 'v': step, 'text':
+                               f'スタッフ・インフルエンサー・PR枠の来院{n}件は来院数・客単価から除いていますが、そのうち{n_paid}件で実際に支払われた'
+                               f'{yen(amount)}円は売上なので着地結果に含めています（予想には含めていません）。'})
+        rec['factors'].sort(key=lambda f: -abs(f['v']))
     return rec
 
 
@@ -372,15 +394,26 @@ def base_stats(raw, base_days, base_records):
     """Model parameters taken from the base (previous, closed) month."""
     import statistics
     X = [Day(raw, d) for d in base_days]
-    coef = {'vrate': {}, 'upsell': {}, 'fill': {}}
-    for t in TYPES:
-        vis = [r for x in X for r in x.visited if vtype(r) == t]
-        plan = [r for x in X for r in x.plan if vtype(r) == t]
-        pr = [r for r in vis if resv(r) > 0]
-        nm = [r for r in vis if resv(r) == 0]
-        coef['vrate'][t] = round(len(vis) / len(plan), 4) if plan else RATE[t]
-        coef['upsell'][t] = round(sum(map(paid, pr)) / sum(map(resv, pr)), 3) if pr else 1
-        coef['fill'][t] = round(sum(map(paid, nm)) / len(nm)) if nm else 0
+
+    def coef_of(keep):
+        """vrate = 来院 ÷ 来院予定, upsell = 決済 ÷ 予約金額 (メニュー入力済みの来院), fill = 未入力の来院の平均決済;
+        初診・再診別, over the reservations KEEP selects."""
+        c = {'vrate': {}, 'upsell': {}, 'fill': {}}
+        for t in TYPES:
+            vis = [r for x in X for r in x.visited if vtype(r) == t and keep(x, r)]
+            plan = [r for x in X for r in x.plan if vtype(r) == t and keep(x, r)]
+            pr = [r for r in vis if resv(r) > 0]
+            nm = [r for r in vis if resv(r) == 0]
+            c['vrate'][t] = round(len(vis) / len(plan), 4) if plan else RATE[t]
+            c['upsell'][t] = round(sum(map(paid, pr)) / sum(map(resv, pr)), 3) if pr else 1
+            c['fill'][t] = round(sum(map(paid, nm)) / len(nm)) if nm else 0
+        return c
+    # 予約時点（0:00）系: reservations already booked when the day started — used for TODAY (the 0:00 forecast)
+    coef = coef_of(lambda x, r: reserved_at(r) < x.day0)
+    # 当日全体系: every reservation of the day, same-day bookings included — used for the day's 補正ロジックの予想 (cal)
+    coef_all = coef_of(lambda x, r: True)
+    high = [r for x in X for r in x.visited if vtype(r) == '初診' and resv(r) > 60000 and paid(r) == 0]
+    coef_all['high'] = [len(high), sum(map(resv, high))]
     allv = {d: visit_total_all(raw, d) for d in base_days}
     wk = collections.defaultdict(list)
     for d in base_days:
@@ -402,7 +435,7 @@ def base_stats(raw, base_days, base_records):
         if rr:
             sd_wd[w] = {'n': round(statistics.mean(r['sd']['n'] for r in rr), 1),
                         'paid': round(statistics.mean(r['sd']['paid'] for r in rr)), 'days': len(rr)}
-    return {'coef': coef, 'wavg': wavg, 'acc': acc, 'band': round(band, 3), 'bias': round(bias, 3), 'sd': sd, 'sd_wd': sd_wd}
+    return {'coef': coef, 'coefAll': coef_all, 'wavg': wavg, 'acc': acc, 'band': round(band, 3), 'bias': round(bias, 3), 'sd': sd, 'sd_wd': sd_wd}
 
 
 def extra(raw, days):

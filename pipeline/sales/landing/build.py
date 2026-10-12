@@ -45,8 +45,9 @@ def ym_of(d):
 def base_from_page(consts):
     """Parameters of the reference month, read from the page's own data (DAYS_BASE, MONTH)."""
     R = consts['DAYS_BASE']
-    band = statistics.mean(abs(r['C'] - r['Amorning']) / r['Amorning'] for r in R)
-    bias = sum(r['C'] for r in R) / sum(r['Amorning'] for r in R) - 1
+    core = lambda r: r['C'] - r.get('Cex', 0)  # noqa: E731  (the forecast does not include excluded visits)
+    band = statistics.mean(abs(core(r) - r['Amorning']) / r['Amorning'] for r in R)
+    bias = sum(core(r) for r in R) / sum(r['Amorning'] for r in R) - 1
     sd_wd = {}
     for w in '月火水木金土日':
         rr = [r for r in R if r['wd'] == w]
@@ -64,7 +65,7 @@ def base_from_page(consts):
         o = [x[3] for x in M if x is not m and (wds[x[0]] == wds[m[0]] or not same)]
         return statistics.mean(o)
     return {'coef': consts['TODAY']['coef'], 'band': round(band, 3), 'bias': round(bias, 3),
-            'fullBias': round(statistics.mean((r['C'] - r['Aold']) / r['Aold'] for r in R), 3),
+            'fullBias': round(statistics.mean((core(r) - r['Aold']) / r['Aold'] for r in R), 3),
             'sd': {'allN': round(statistics.mean(r['sd']['n'] for r in R), 1), 'allPaid': round(sum(r['sd']['paid'] for r in R) / len(R))},
             'sd_wd': sd_wd, 'wavg': {w: round(statistics.mean(v)) for w, v in wk.items()},
             'acc': {'wk': round(statistics.mean(abs(m[3] - loo(m, True)) / m[3] for m in M), 3),
@@ -82,6 +83,9 @@ def seed(consts):
     if 'coef' not in T:
         # the values the published page used (TODAY.vrate, fillNote, 「初診 ×1.227、再診 ×1.101」)
         T['coef'] = {'vrate': T['vrate'], 'upsell': {'初診': 1.227, '再診': 1.101}, 'fill': {'初診': 23470, '再診': 6369}}
+    if 'coefAll' not in T:
+        # 補正ロジックの予想 of the day records (「予約金額から決済への倍率 初診 1.01、再診 1.08」「補完単価 23,376円・7,349円」)
+        T['coefAll'] = {'vrate': T['vrate'], 'upsell': {'初診': 1.01, '再診': 1.08}, 'fill': {'初診': 23376, '再診': 7349}}
     return mon
 
 
@@ -98,12 +102,17 @@ def gen_texts(consts, base_days_n, today):
     if recon:
         parts.append(f'{recon[0]}〜{recon[-1]}は予約登録日から朝の時点の予約を再現しています' if len(recon) > 1 else f'{recon[0]}は予約登録日から朝の時点の予約を再現しています')
     g = consts['TARGET']
+    ca = consts['TODAY']['coefAll']
     return {
         'sub': f'（差額＝実決済 − 予約時点の予想。来院率 初診90%・再診95%。メニュー未入力は{b}月の未入力の方の実績で補完）',
         'goalFoot': f'予約データのない日は、{b}月の同じ曜日の平均で見込んでいます。日割り目標は、{g["days"]}日すべて営業する前提で等分しています。',
         'cmpFoot': ('、'.join(parts) + '。') if parts else f'{c}月はまだ実績がありません。',
         'tbaseSub': f'{mon["calib"]}の実績から算出',
         'monthHead': f'{b}月の予約金額と決済額（来院者のみ）',
+        'fixFill': f"初診 {ca['fill']['初診']:,}円、再診 {ca['fill']['再診']:,}円",
+        'fixMult': f"初診 {ca['upsell']['初診']}、再診 {ca['upsell']['再診']}",
+        'fixMultNote': f'メニュー入力済みの来院者の{b}月平均です。',
+        **({'fixHigh': f"（{b}月は{ca['high'][0]}件、計{ca['high'][1]:,}円が決済0円）"} if ca.get('high') else {}),
         'footPast': (f'データ：KOS OpenAPI（予約・決済・購入・施術・プリペイドの統計）から自動で集計しています（{today.month}/{today.day} 0:00更新）。'
                      f'スタッフ（患者カテゴリ「NaA+HPMS」）と、インフルエンサー・PR枠（カテゴリ「インフルエンサー」ほか）の来院は、予想・客単価などの分析から除いています'
                      + (f'（{c}月：スタッフ{ex.get("staff", [0, 0])[0]}件・決済{ex.get("staff", [0, 0])[1]:,}円、インフルエンサー・PR{ex.get("influencer", [0, 0])[0]}件・決済{ex.get("influencer", [0, 0])[1]:,}円）' if ex else '')
@@ -149,8 +158,13 @@ def build(html, raw, today, targets):
         snap = T0.get('snap') if T0.get('date') == dlabel(e) else None
         m = T0['cur'] if T0.get('date') == dlabel(e) else morning.get(dlabel(e))
         recs[dlabel(e)] = aggregate.day_record(raw, e, snap=snap, morning=m, pay_based=True)
-        recs[dlabel(e)]['cal'] = round(cal_of(raw, e, T0['coef']))
+        recs[dlabel(e)]['cal'] = round(cal_of(raw, e, T0['coefAll']))
     consts['DAYS_CUR'] = [recs[k] for k in sorted(recs, key=lambda s: tuple(map(int, s.split('/'))))]
+    # published days made before the excluded visits' own payments were counted: add them once
+    for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
+        for rec in consts[key]:
+            if 'Cex' not in rec:
+                restate(raw, rec, label_date(rec['date'], year))
     # 2. month rollover: today is in a new month -> the finished month becomes the reference month
     if ym_of(today) != cur_ym:
         if len(consts['DAYS_CUR']) != len(month_days(cur_ym)):
@@ -161,7 +175,7 @@ def build(html, raw, today, targets):
         consts['MONTH'] = aggregate.month_chart(raw, bdays)
         consts['EXTRA'] = aggregate.extra(raw, bdays)
         bs = aggregate.base_stats(raw, bdays, consts['DAYS_BASE'])
-        T0['coef'] = bs['coef']
+        T0['coef'], T0['coefAll'] = bs['coef'], bs['coefAll']
         mon = {'y': today.year, 'b': bdays[0].month, 'c': today.month, 'by': bdays[0].year,
                'calib': f'{bdays[0].month}/1〜{bdays[0].month}/{bdays[-1].day}'}
         consts['MON'] = mon
@@ -178,6 +192,7 @@ def build(html, raw, today, targets):
         sys.stderr.write(f'STOP: no sales target for {ym} in targets.json. Ask for it and add "{ym}": <yen>.\n')
         sys.exit(3)
     T = aggregate.today_record(raw, today, base)
+    T['coefAll'] = T0['coefAll']
     T['_excl'] = {k: v for k, v in excl_counts(raw, [label_date(d['date'], mon['y']) for d in consts['DAYS_CUR']]).items()}
     morning[dlabel(today)] = T['cur']
     consts['TODAY'] = T
@@ -189,6 +204,22 @@ def build(html, raw, today, targets):
     out = page.set_gen(out, texts)
     out = page.set_month_svg_label(out, f'{mon["b"]}月1日から{len(consts["MONTH"])}日の日別、来院者の予約金額と決済額')
     return out, consts
+
+
+def restate(raw, rec, d):
+    """着地結果（来院ベース）を「除外来院の自費分を含む」定義にそろえる。足す額 = API の新しい定義の値 − 公開値
+    (the published value already held part of it on days where the page had kept a paying influencer / staff visit)."""
+    from data import excluded, paid
+    x = aggregate.Day(raw, d)
+    exv = [r for r in x.excl if r['reservationStatus'] in ('COMPLETED', 'IN_PROGRESS')]
+    amount = sum(paid(r) for r in exv)
+    new_c = sum(paid(r) for r in x.visited) + amount
+    aggregate.add_excluded(rec, amount, len(exv), sum(1 for r in exv if paid(r) > 0), step=new_c - rec['C'])
+    if 'payC' in rec:  # the published value stopped at the export time of that evening; use the closed day
+        pb = aggregate.pay_bridge(raw, d)
+        if pb['total'] != rec['payC']:
+            rec['payC'] = pb['total']
+            rec['payNote'] = aggregate.pay_note(pb, rec['prep'], rec['C'])
 
 
 def cal_of(raw, d, coef):

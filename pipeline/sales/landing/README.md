@@ -27,7 +27,7 @@
 
 ```bash
 export WORK=/tmp/sales-work/landing            # リポジトリの外
-python3 -I pipeline/sales/landing/daily.py     # 0:00 JST に実行。新しいページは $WORK/new.html
+python3 -I pipeline/sales/landing/daily.py     # 0:30 JST に実行。新しいページは $WORK/new.html
 # 個別に
 python3 -I pipeline/sales/landing/fetch.py --from 2026-10-01 --to 2026-10-12 --future-to 2026-10-31 --work $WORK --visitors 2026-10
 python3 -I pipeline/sales/landing/build.py --html $WORK/current.html --work $WORK --out $WORK/new.html --today 2026-10-12
@@ -39,7 +39,7 @@ NODE_PATH=$(npm root -g) node pipeline/sales/landing/check_render.js $WORK/new.h
 1 = 取得・作成・整合チェック・表示チェックのどれかが失敗。月の目標がないときは止める方針にした
 （目標は当日パネル・目標の進捗・月末見込みの比較の3か所で使っており、目標なしで描く分岐はページにないため）。
 
-## 毎日の処理（0:00 JST）
+## 毎日の処理（0:30 JST に実行。0:00 時点の予約で予想する）
 
 1. 前日を締める：前日の日別レコードを API から作り、`DAYS_CUR` に追加（それより前の日は公開済みの値をそのまま残す）。
    - 予約時点（当日朝）の予想 `Amorning` = 前日0:00に公開した `TODAY.cur`（`AmSrc: "snapshot"`）
@@ -54,7 +54,7 @@ NODE_PATH=$(npm root -g) node pipeline/sales/landing/check_render.js $WORK/new.h
 
 | 項目 | 定義 | API |
 |---|---|---|
-| 除外 | スタッフ（患者カテゴリ `NaA+HPMS`）と、インフルエンサー・PR（カテゴリ `インフルエンサー`、患者メモ「ブログにのせる…」の1名）の来院は、予想・着地結果・客単価・要因から除く。目標の進捗は全体 | schedule `visitorCategoryNames` / `visitorMemo` |
+| 除外 | スタッフ（患者カテゴリ `NaA+HPMS`）と、インフルエンサー・PR（カテゴリ `インフルエンサー`、患者メモ「ブログにのせる…」の1名）の来院は、来院数・予約数・予想・客単価・要因から除く。ただしその来院で実際に支払われた金額（自費分、`Cex`）は着地結果（来院ベース）に含め、差の内訳に「除外来院の決済」の段を加える（予想には含めない）。客単価は分子・分母とも除外来院を含めない。目標の進捗は全体 | schedule `visitorCategoryNames` / `visitorMemo` |
 | 初診／再診 | 初回施術予約かどうか | `isFirstProcedureSchedule`（公開値と全日一致） |
 | 来院 | 予約状態が完了（進行中を含む） | `reservationStatus` |
 | 予約金額 | 希望施術メニュー総額 | `requestedProductOptionTotalPriceV2` |
@@ -77,6 +77,7 @@ NODE_PATH=$(npm root -g) node pipeline/sales/landing/check_render.js $WORK/new.h
 | 客単価 | 来院ベースの決済額 ÷ 来院数。施術数 = 決済のあった方の施術の種類数 | |
 | `MONTH` | 基準月の全来院（スタッフ含む）の [日, 来院数, 予約金額, 決済額] | |
 | 曜日平均 `wavg` | 基準月の `MONTH` 決済額の曜日平均（公開値と一致） | |
+| 係数（2系統、毎月の1日に前月から再計算） | 予約時点系 `TODAY.coef`：前月の各日で「その日0:00より前に入っていた予約」だけを使う。来院率 = 来院 ÷ 来院予定、上乗せ率 = 決済 ÷ 予約金額（メニュー入力済みの来院）、補完単価 = メニュー未入力の来院の平均決済（いずれも初診・再診別）。当日の予想（`TODAY.cur`・上乗せ補正 `cal`）に使う。当日全体系 `TODAY.coefAll`：同じ式を、当日に入った予約も含むその日のすべての予約で計算。日別の「補正ロジックの予想」（`cal` = Σ 来院予定 × 来院率 ×（予約金額 × 上乗せ率、未入力は補完単価））と「予測ロジックの見直し案」の数値に使う。2026年10月分は公開ページの値（予約時点系 1.227/1.101・23,470/6,369円、当日全体系 1.01/1.08・23,376/7,349円、来院率 94.26%/97.09%）を引き継ぐ | |
 | 当日の予想 `TODAY.cur` | 予約金額 × 来院率（90/95%）、未入力は基準月の未入力来院の平均決済（初診・再診別）で補完。上乗せ補正 `cal` は予約金額 × 基準月の決済÷予約金額 | |
 
 ### API でできないこと・やり方を変えたこと
