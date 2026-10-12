@@ -270,6 +270,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'prep': prep,
         'Amorning': round(morning) if morning is not None else round(Am),
         'AmSrc': 'snapshot' if morning is not None else 'recon',
+        'sameSrc': 'snapshot' if snap is not None else 'memo',
     }
     rec['factors'] = factors(rec, x, vis, nomenu, zeros, ups, dns, sameT, vr)
     exv = [r for r in x.excl if r['reservationStatus'] in config.VISITED]

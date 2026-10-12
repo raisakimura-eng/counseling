@@ -123,6 +123,9 @@ def main():
     if rc:
         sys.exit(f'STOP: fetching KOS data failed (exit {rc}); nothing built')
     todo = os.path.join(WORK, 'summary_todo.json')
+    stale = os.path.join(WORK, 'daily_analysis.json')
+    if os.path.exists(stale):
+        os.remove(stale)  # only a file made by this run may be posted
     rc = py('build.py', '--html', cur, '--work', WORK, '--out', new, '--today', today,
             *(['--summary', a.summary] if a.summary else ['--summary-todo', todo]))
     if rc == 4:
@@ -157,6 +160,10 @@ def main():
     y = last
     print(f"READY: $WORK/new.html — {y['date']} 着地結果 {y.get('payC', y['C']):,}円（朝の予想 {y['Amorning']:,}円）, "
           f"{T['date']}の着地予想 {T['cur']:,}円（予約{T['active']}件）, {G['month']}累計 {act:,}円 / 目標 {G['target']:,}円")
+    # 「この日の分析」 of the closed day, for the Slack post (not on the page). A failure here does not stop publishing.
+    out = os.path.join(WORK, 'daily_analysis.json')
+    if py('analysis.py', '--html', new, '--work', WORK, '--day', yday, '--out', out):
+        print('WARNING: daily_analysis.json could not be made; the page is still ready to publish')
 
 
 if __name__ == '__main__':

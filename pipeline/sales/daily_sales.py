@@ -97,6 +97,9 @@ def landing(deploy, summary=None, today=None):
         sys.exit('STOP landing: 今月の売上目標が読めません（targets.json の default も無い）')
     if code:
         sys.exit('STOP landing: build / verify / render check failed; nothing deployed')
+    analysis = os.path.join(w, 'daily_analysis.json')
+    if os.path.exists(analysis):
+        print(f'ANALYSIS READY: {analysis}（「この日の分析」の Slack 投稿用。指針: pipeline/sales/landing/README.md「Slack 投稿文の指針」）')
     if deploy:
         netlify.deploy('naaclinic', os.path.join(w, 'new.html'), '自動更新', require_password=False)
         print('DONE landing: https://naaclinic.netlify.app')
