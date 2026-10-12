@@ -1,6 +1,7 @@
 """Daily update of the sales dashboards on Netlify (run by the routine at 0:30 JST).
 
     python3 -I pipeline/sales/daily_sales.py [--only counselor|landing] [--no-deploy]
+    python3 -I pipeline/sales/daily_sales.py --intraday [--no-deploy]   # 12/14/16/18/20時: landing の当日の来院実績だけ
 
 counselor (naa-counselor): download the live page -> fetch every month from KOS -> build up to
 yesterday (JST) -> verify --strict -> Chromium render check -> deploy.
