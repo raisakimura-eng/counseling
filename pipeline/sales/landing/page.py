@@ -308,3 +308,33 @@ def migrate_summaries(html):
     j = js.index('\n', i + 1)
     js = js[:j] + '\nconst SUMMARIES = [];' + js[j:]
     return html[:a] + js + html[b:]
+
+
+# ---------------------------------------------------------------- stage 3: 日中の「現時点の決済」 ----
+# The block already exists in today() and is drawn whenever TODAY.live is set (and TODAY.final is not);
+# the 0:30 run leaves TODAY.live = null, so it is hidden then. Small wording fixes only.
+JS_EDITS_3 = [
+    # also show the 来院ベース amount (the page's 着地結果 of the day is 決済ベース; 客単価 is 来院ベース)
+    ('<span class="n">来院${L.vis}件、客単価${yen(L.aov)}円</span>',
+     '<span class="n">来院${L.vis}件、客単価${yen(L.aov)}円${L.paidVisit != null ? `、来院ベース${yen(L.paidVisit)}円` : \'\'}</span>', 1),
+    # nothing sold yet (early morning)
+    ("売れた施術（現時点）：${L.top.slice(0, 3).map(r => `${esc(r[0])} ${yen(r[2])}円`).join('、')}。",
+     "売れた施術（現時点）：${L.top.length ? L.top.slice(0, 3).map(r => `${esc(r[0])} ${yen(r[2])}円`).join('、') : 'まだありません'}。", 1),
+    # the forecast is made from the reservations at 0:00, not from the previous evening's export
+    ("下は${L.noTime ? '当日朝' : '前日夜'}の予約からの予想です。",
+     "下は${L.noTime ? '当日朝' : (L.basisLabel || '前日夜')}の予約からの予想です。", 1),
+]
+
+
+def migrate_live(html):
+    """Stage 3 (idempotent)."""
+    if 'L.basisLabel' in html:
+        return html
+    a, b = script_bounds(html)
+    js = html[a:b]
+    for old, new, n in JS_EDITS_3:
+        c = js.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page code changed; expected {n}× {old[:60]!r}, found {c}')
+        js = js.replace(old, new)
+    return html[:a] + js + html[b:]

@@ -85,6 +85,24 @@ class Client:
                 return data
 
 
+def utc_t(t):
+    """An aware datetime as an API timestamp."""
+    return t.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def fetch_until(cli, kind, day, until):
+    """Rows of one JST day up to the time UNTIL (aware datetime) — 日中の更新 replays an hour of the day.
+    Schedules are selected by reservation start, so for them the whole day is taken."""
+    path, f_from, f_to = KINDS[kind]
+    day0 = dt.datetime.combine(day, dt.time(), JST)
+    end = day0 + dt.timedelta(days=1) if kind == 'schedule' else min(until, day0 + dt.timedelta(days=1))
+    rows = cli.fetch_all(path, {f_from: utc_t(day0), f_to: utc_t(end)})
+    if kind == 'transaction':
+        for r in rows:
+            r['_day'] = day.isoformat()
+    return rows
+
+
 def fetch_kind(cli, kind, start, end_excl):
     path, f_from, f_to = KINDS[kind]
     if kind != 'transaction':
@@ -116,6 +134,7 @@ def main():
     ap.add_argument('--kinds', default=','.join(KINDS))
     ap.add_argument('--refresh', action='store_true', help='re-fetch closed months too')
     ap.add_argument('--exact', action='store_true', help='fetch only --from..--to (日中の更新: just today), not whole months')
+    ap.add_argument('--until', metavar='HH:MM', help='with --exact and a single day: only rows up to this JST time (replaying 日中の更新)')
     ap.add_argument('--visitors', metavar='YYYY-MM', help='also fetch birth dates of visitors with reservations from this month on')
     a = ap.parse_args()
     os.umask(0o077)
@@ -136,7 +155,11 @@ def main():
                 continue
             # normally the whole month (from the 1st) so the file is self-contained; --exact: only --from..--to
             s0 = s if a.exact else dt.date.fromisoformat(ym + '-01')
-            data = fetch_kind(cli, kind, s0, e)
+            if a.exact and a.until and frm == to:
+                h, mi = map(int, a.until.split(':'))
+                data = fetch_until(cli, kind, frm, dt.datetime.combine(frm, dt.time(h, mi), JST))
+            else:
+                data = fetch_kind(cli, kind, s0, e)
             json.dump({'kind': kind, 'from': utc(s0), 'to': utc(e),
                        'fetchedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'data': data}, open(out, 'w'), ensure_ascii=False)

@@ -41,7 +41,7 @@ def py(script, *args):
 
 
 def intraday(a):
-    """12・14・16・18・20時: download the live page, fetch today's reservations only, refresh the results."""
+    """12・14・16・18・20時: download the live page, fetch today's data only, refresh 現時点の決済 and 来院済み."""
     os.makedirs(WORK, exist_ok=True)
     os.chmod(WORK, 0o700)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
@@ -56,9 +56,10 @@ def intraday(a):
         netlify.download(config.SITE, cur)
     if page.get_consts(open(cur, encoding='utf-8').read())['TODAY']['date'] != f'{today.month}/{today.day}':
         sys.exit(f'STOP: the live page has no forecast for {today} yet (the 0:30 run did not publish); nothing to refresh')
-    if py('fetch.py', '--from', today, '--to', today, '--kinds', 'schedule', '--exact', '--work', w):
+    if py('fetch.py', '--from', today, '--to', today, '--kinds', 'schedule,transaction,purchase,procedure,prepaid', '--exact',
+          '--work', w, *(['--until', a.as_of] if a.as_of else [])):
         sys.exit('STOP: fetching KOS data failed; nothing built')
-    if py('build.py', '--intraday', '--html', cur, '--work', w, '--out', new, '--today', today):
+    if py('build.py', '--intraday', '--html', cur, '--work', w, '--out', new, '--today', today, *(['--as-of', a.as_of] if a.as_of else [])):
         sys.exit(1)
     npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
     if subprocess.run(['node', os.path.join(HERE, 'check_render.js'), new], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
@@ -71,6 +72,7 @@ def main():
     ap.add_argument('--today', help='JST date of the new day (default: today in JST)')
     ap.add_argument('--html', help='use this page instead of downloading it from Netlify')
     ap.add_argument('--summary', help='$WORK/summary_todo.json after its "text" was written: makes the 月まとめ tab')
+    ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday, for tests: replay this time of a finished day')
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only today\'s results (no forecast change)')
     a = ap.parse_args()
     os.umask(0o077)

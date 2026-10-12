@@ -20,6 +20,7 @@ What changes (everything else on the page is kept):
 The current month's sales target must be in --targets, otherwise the build stops (exit code 3).
 """
 import argparse
+import collections
 import datetime as dt
 import json
 import os
@@ -180,7 +181,7 @@ def build(html, raw, today, targets, summary_text=None):
         mon = seed(consts)
         html = page.migrate(html, mon)
         consts['MON'] = mon
-    html = page.migrate_summaries(html)
+    html = page.migrate_live(page.migrate_summaries(html))
     consts.setdefault('SUMMARIES', [])
     mon = consts['MON']
     T0 = consts['TODAY']
@@ -286,25 +287,52 @@ def cal_of(raw, d, coef):
     return sum(coef['vrate'][vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else coef['fill'][vtype(r)]) for r in x.plan)
 
 
-INTRADAY_FIELDS = ('done', 'wait', 'doneT', 'hours')
+INTRADAY_FIELDS = ('done', 'wait', 'doneT', 'hours', 'live')
 
 
-def intraday(html, raw, today, now):
-    """日中の更新（12・14・16・18・20時）: the 0:30 forecast stays exactly as published. Only the numbers the
-    当日 tab already shows as results are refreshed from the reservations' current status:
-    来院済み / これから (done, wait, doneT, the hours chart), counted on the reservations of the 0:00 snapshot
-    (TODAY.snap), plus the 「…時点」 note of the footer. 当日キャンセル (sameN) is left alone: the page shows
-    来院予定 = active + sameN, and active (the morning count) must not change, so it would be counted twice;
-    the day's cancellations appear when the 0:30 run closes the day.
-    Nothing else changes: DAYS_*, TARGET (月の実績 = closed days only), TODAY's forecast, coefficients, snapshot."""
-    from data import excluded, start, vtype
+def intraday(html, raw, today, now, as_of=None):
+    """日中の更新（12・14・16・18・20時）: the 0:30 forecast stays exactly as published. Refreshed:
+    * TODAY.live — the page's own 「現時点の決済」 block: 決済ベース so far, 来院（来院ベース）, the remaining
+      reservations and the 着地見込み (= 現時点の決済 + remaining reservations × the 0:30 forecast's rates and
+      coefficients), 売れた施術, 高単価施術, プリペイド, all as of the KOS data time;
+    * 来院済み / これから (done, wait, doneT, the hours chart) on the reservations of the 0:00 snapshot;
+    * the 「…時点」 note of the footer.
+    当日キャンセル (sameN) is left alone (the page shows 来院予定 = active + sameN; active must not change).
+    Nothing else changes: DAYS_*, TARGET, TODAY's forecast, coefficients, snapshot.
+    AS_OF (aware datetime): replay an earlier hour of a finished day — the data must have been fetched up to
+    that time (fetch.py --until); a reservation counts as 来院 if it was received by then."""
+    from data import JST, excluded, jst, money, paid, resv, start, vtype
+    html = page.migrate_live(html)
     consts = page.get_consts(html)
     T = consts['TODAY']
     if T['date'] != dlabel(today):
         raise SystemExit(f"STOP: the page shows {T['date']}, not {dlabel(today)}; the 0:30 run has to make today's forecast first")
+    allrows = raw.sched.get(today, [])
+    if as_of is not None:
+        payers = {t['visitorId'] for t in raw.tx.get(today, [])}
+
+        def at(r):
+            rec = jst(r.get('receptionDateTimeUtc'))
+            if rec and rec <= as_of:
+                st = 'COMPLETED' if (r['visitorId'] in payers or paid(r) == 0) else 'IN_PROGRESS'
+            else:
+                st = r['reservationStatus'] if r['reservationStatus'] in config.CANCELLED else 'RESERVED'
+            return dict(r, reservationStatus=st)
+        allrows = [at(r) for r in allrows]
+        data_time = as_of
+    else:
+        stamps = [jst(t.get('lastUpdatedPaymentDateTimeUtc')) for t in raw.tx.get(today, [])]
+        stamps += [jst(p.get('createdDateTimeUtc')) for p in raw.purchase.get(today, [])]
+        stamps += [jst(p.get('completedDateTimeUtc')) for p in raw.proc.get(today, [])]
+        stamps += [jst(r.get('receptionDateTimeUtc')) for r in allrows]
+        nowdt = dt.datetime.now(JST)
+        stamps = [x for x in stamps if x and x <= nowdt]
+        data_time = max(stamps) if stamps else nowdt  # no result yet today: as of now
+    cut = data_time.strftime('%H:%M')
     snap = set(T.get('snap') or [])
-    rows = [r for r in raw.sched.get(today, []) if not excluded(r) and (r['scheduleId'][:8] in snap if snap else True)]
-    if snap and len({r['scheduleId'][:8] for r in rows}) < len(snap) * 0.9:
+    core = [r for r in allrows if not excluded(r)]
+    rows = [r for r in core if (r['scheduleId'][:8] in snap if snap else True)]
+    if snap and as_of is None and len({r['scheduleId'][:8] for r in rows}) < len(snap) * 0.9:
         raise SystemExit(f'STOP: only {len(rows)} of the {len(snap)} reservations of the 0:00 snapshot are in the KOS data')
     done = [r for r in rows if r['reservationStatus'] in config.VISITED]
     wait = [r for r in rows if r['reservationStatus'] == 'RESERVED']
@@ -313,12 +341,45 @@ def intraday(html, raw, today, now):
         h = f'{start(r).hour:02d}'
         e = hrs.setdefault(h, [h, 0, 0])
         e[1 if r in done else 2] += 1
+    # 現時点の決済 and the rest of the day (every reservation of today, same-day bookings included)
+    visited = [r for r in core if r['reservationStatus'] == 'COMPLETED']
+    inprog = [r for r in core if r['reservationStatus'] == 'IN_PROGRESS']
+    ex_paid = sum(paid(r) for r in allrows if excluded(r) and r['reservationStatus'] == 'COMPLETED')
+    vbase = sum(paid(r) for r in visited)
+    pay = aggregate.pay_day(raw, today)
+    coef, rate = T['coef'], config.RATE
+    future = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') >= cut] + inprog
+    past = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') < cut]
+    base = sum(rate[vtype(r)] * (resv(r) or coef['fill'][vtype(r)]) for r in future)
+    upb = sum(rate[vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else coef['fill'][vtype(r)]) for r in future)
+    tasks = aggregate.proc_tasks(raw, today)
+    tr = collections.defaultdict(lambda: [set(), 0])
+    for vid, ts in tasks.items():
+        for t in ts:
+            k = aggregate.prod_name(t)
+            tr[k][0].add(vid)
+            tr[k][1] += money(t.get('ticketPriceV2'))
+    top = sorted(([k, len(v[0]), round(v[1])] for k, v in tr.items()), key=lambda a: -a[2])[:5]
+    payers_ = [r for r in visited if paid(r) > 0]
+    kinds = [len({t.get('productTitle') for t in tasks.get(r['visitorId'], [])}) for r in payers_]
+    buys = [e for e in raw.prepaid.get(today, []) if e.get('chargingAmountType') == 'BALANCE' and e['chargingType'] == 'CHARGE']
+    hp = aggregate.hpb_sold(raw, today, cut)
+    live = {'asof': f'{cut}時点のデータ', 'cut': cut, 'noTime': False, 'basisLabel': '0:00時点',
+            'paid': pay, 'paidVisit': vbase + ex_paid, 'vis': len(visited),
+            'aov': round(vbase / len(visited)) if visited else 0,
+            'fut': {'n': len(future), 'T': {t: sum(1 for r in future if vtype(r) == t) for t in ('初診', '再診')},
+                    'resv': sum(resv(r) for r in future), 'base': round(base)},
+            'land': round(pay + base), 'landUp': round(pay + upb), 'up': round(upb / base, 3) if base else 1.0,
+            'top': top, 'multi': round(sum(1 for k in kinds if k >= 2) / len(kinds), 3) if kinds else 0,
+            'hpSold': hp if hp['n'] else None, 'incN': len(inprog),
+            'prepBuy': [len(buys), sum(money(e.get('chargingAmountV2')) for e in buys)], 'pastN': len(past)}
     new = {'done': len(done), 'wait': len(wait), 'doneT': {t: sum(1 for r in done if vtype(r) == t) for t in ('初診', '再診')},
-           'hours': [hrs[k] for k in sorted(hrs)]}
+           'hours': [hrs[k] for k in sorted(hrs)], 'live': live}
     T2 = dict(T, **new)
+    now = cut
     out = page.set_consts(html, {'TODAY': T2})
     foot = (f'データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
-            f'KOS OpenAPI の予約データ（{today.month}/{today.day} 0:00時点。来院済みの件数は{now}時点）。'
+            f'KOS OpenAPI の予約データ（{today.month}/{today.day} 0:00時点。現時点の決済・来院済みの件数は{now}時点のデータ）。'
             f'来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。')
     out = page.set_gen(out, {'footToday': foot})
     # guard: nothing but the result fields may have changed
@@ -343,15 +404,19 @@ def main():
     ap.add_argument('--summary', help='summary_todo.json whose "text" has been written (makes the 月まとめ tab)')
     ap.add_argument('--summary-todo', help='where to write the numbers when a 月まとめ is needed (default $WORK/summary_todo.json)')
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only the results of today (see intraday())')
+    ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday: replay this time of a finished day (data fetched with --until)')
     a = ap.parse_args()
     os.umask(0o077)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
     html = open(a.html, encoding='utf-8').read()
     if a.intraday:
         now = dt.datetime.now(JST).strftime('%H:%M')
-        out, T, T2 = intraday(html, Raw(a.work), today, now)
+        as_of = dt.datetime.combine(today, dt.time(*map(int, a.as_of.split(':'))), JST) if a.as_of else None
+        out, T, T2 = intraday(html, Raw(a.work), today, now, as_of)
         open(a.out, 'w', encoding='utf-8').write(out)
-        print(f"built {a.out} (intraday {now}): {T2['date']}の予想 {T2['cur']:,}円（変更なし）, "
+        L = T2['live']
+        print(f"built {a.out} (intraday, {L['asof']}): 現時点の決済 {L['paid']:,}円（来院ベース {L['paidVisit']:,}円、来院{L['vis']}件）, "
+              f"残り{L['fut']['n']}件, 着地見込み {L['land']:,}円; {T2['date']}の予想 {T2['cur']:,}円（変更なし）, "
               f"来院済み {T['done']}→{T2['done']}件, これから {T['wait']}→{T2['wait']}件")
         return
     targets = config.load_targets(a.targets)
