@@ -1,17 +1,20 @@
 """Daily update of the sales dashboards on Netlify (run by the routine at 0:30 JST).
 
-    python3 -I pipeline/sales/daily_sales.py [--only counselor|landing] [--no-deploy]
+    python3 -I pipeline/sales/daily_sales.py [--only counselor|landing|nurse] [--no-deploy]
     python3 -I pipeline/sales/daily_sales.py --intraday [--no-deploy]   # 12/14/16/18/20時: landing の当日の来院実績だけ
 
 counselor (naa-counselor): download the live page -> fetch every month from KOS -> build up to
 yesterday (JST) -> verify --strict -> Chromium render check -> deploy.
+nurse (naa-nurse): download the live page -> fetch this month from KOS -> build 1st..yesterday -> verify --strict
+-> Chromium render check (compared with verify's numbers) -> deploy. Not in ENABLED yet: run it with --only nurse.
+The first run replaces the Excel-export page and needs --only nurse --accept-closed-month-changes (once).
 landing (naaclinic): pipeline/sales/landing/daily.py (download, fetch, build, verify, render) -> deploy.
 Exit code 3 from landing means the month's sales target is missing in pipeline/sales/targets.json.
 Exit code 4 from landing (1st of a month): the closed month's 「◯月まとめ」 needs its sentences. Write the
 "text" of $SALES_WORK/landing/summary_todo.json (README in landing/), then run
     python3 -I pipeline/sales/daily_sales.py --only landing --summary $SALES_WORK/landing/summary_todo.json
 
-Both sites are public by the owner's decision (2026-10-12), so they deploy with require_password=False.
+All three sites are public by the owner's decision (2026-10-12), so they deploy with require_password=False.
 Work folders under $SALES_WORK (default /tmp/sales-work) hold patient data and stay outside the repo.
 """
 import argparse
@@ -57,6 +60,29 @@ def counselor(deploy):
         print('built and checked (not deployed):', new)
 
 
+def nurse(deploy, first_switch=False):
+    w = os.path.join(BASE, 'nurse')
+    os.makedirs(os.path.join(w, 'out'), exist_ok=True)
+    os.chmod(w, 0o700)
+    until = (dt.datetime.now(JST).date() - dt.timedelta(days=1)).isoformat()
+    cur, new, exp = os.path.join(w, 'current.html'), os.path.join(w, 'out', 'new.html'), os.path.join(w, 'out', 'expect.json')
+    netlify.download('naa-nurse', cur)
+    d = os.path.join(HERE, 'nurse')
+    if run(sys.executable, '-I', os.path.join(d, 'build.py'), '--html', cur, '--work', w, '--out', new,
+           '--until', until, '--fetch-all', *(['--accept-closed-month-changes'] if first_switch else [])):
+        sys.exit('STOP nurse: build failed; nothing deployed')
+    if run(sys.executable, '-I', os.path.join(d, 'verify.py'), new, w, '--strict', '--expect', exp):
+        sys.exit('STOP nurse: verify --strict found differences; nothing deployed')
+    npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
+    if run('node', os.path.join(d, 'check_render.js'), new, '--expect', exp, env=dict(os.environ, NODE_PATH=npm_root)):
+        sys.exit('STOP nurse: render check failed; nothing deployed')
+    if deploy:
+        netlify.deploy('naa-nurse', new, f'{until}分まで反映（自動更新）', require_password=False)
+        print(f'DONE nurse: {until}分まで反映 https://naa-nurse.netlify.app')
+    else:
+        print('built and checked (not deployed):', new)
+
+
 def landing(deploy, summary=None, today=None):
     w = os.path.join(BASE, 'landing')
     code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), *(['--summary', summary] if summary else []), *(['--today', today] if today else []),
@@ -93,11 +119,13 @@ def landing_intraday(deploy, today=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--only', choices=['counselor', 'landing'])
+    ap.add_argument('--only', choices=['counselor', 'landing', 'nurse'])
     ap.add_argument('--no-deploy', action='store_true')
     ap.add_argument('--intraday', action='store_true', help='日中の更新 of landing only (12/14/16/18/20時); counselor is not run')
     ap.add_argument('--today', help='landing, for tests: JST date to treat as today (the 0:30 run makes the forecast for it)')
     ap.add_argument('--summary', help='landing: summary_todo.json with the 月まとめ sentences written (after exit 4)')
+    ap.add_argument('--accept-closed-month-changes', action='store_true',
+                    help='nurse only, once: the first build from the API replaces the Excel-export page (numbers change slightly)')
     a = ap.parse_args()
     os.umask(0o077)
     if a.intraday:
@@ -105,6 +133,8 @@ def main():
     for name in ([a.only] if a.only else ENABLED):
         if name == 'landing':
             landing(not a.no_deploy, a.summary, a.today)
+        elif name == 'nurse':
+            nurse(not a.no_deploy, a.accept_closed_month_changes)
         else:
             counselor(not a.no_deploy)
 
