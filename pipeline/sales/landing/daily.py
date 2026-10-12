@@ -51,7 +51,7 @@ def main():
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
     yday = today - dt.timedelta(days=1)
     ym = today.strftime('%Y-%m')
-    targets = json.load(open(TARGETS))
+    targets = config.load_targets(TARGETS)
     if not targets.get(ym):
         print(f'【要対応】{today.month}月の売上目標が未設定です。金額を教えてください（pipeline/sales/targets.json に "{ym}": 金額 を追加）。')
         sys.exit(3)

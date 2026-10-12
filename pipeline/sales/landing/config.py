@@ -52,3 +52,16 @@ SAME_DAY_WORDS = re.compile(r'当日キャンセル|当日ｷｬﾝｾﾙ|当日
 
 # 「9月まとめ」 (SUMMARY) was written by hand before automation; later months get SUMMARIES entries
 LEGACY_SUMMARY = '2026-09'
+
+
+class Targets(dict):
+    """Monthly sales targets from targets.json. A month without its own entry uses "default"
+    (the owner's rule, 2026-10-12: if no target is shared for a month, use 55,000,000円)."""
+
+    def get(self, ym, fallback=None):
+        return super().get(ym) or super().get('default') or fallback
+
+
+def load_targets(path):
+    import json
+    return Targets(json.load(open(path)))

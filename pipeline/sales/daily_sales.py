@@ -25,7 +25,7 @@ import netlify  # noqa: E402
 
 JST = dt.timezone(dt.timedelta(hours=9))
 BASE = os.environ.get('SALES_WORK', '/tmp/sales-work')
-ENABLED = ['counselor']  # landing is added after the owner approves publishing it
+ENABLED = ['counselor', 'landing']
 
 
 def run(*args, env=None):
@@ -67,7 +67,7 @@ def landing(deploy, summary=None, today=None):
               f'python3 -I pipeline/sales/daily_sales.py --only landing --summary {todo} で再実行してください。nothing deployed')
         sys.exit(4)
     if code == 3:
-        sys.exit('STOP landing: 今月の売上目標が pipeline/sales/targets.json にありません（【要対応】目標金額をユーザーに確認）')
+        sys.exit('STOP landing: 今月の売上目標が読めません（targets.json の default も無い）')
     if code:
         sys.exit('STOP landing: build / verify / render check failed; nothing deployed')
     if deploy:

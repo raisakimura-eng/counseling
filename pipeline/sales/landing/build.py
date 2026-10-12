@@ -20,6 +20,7 @@ What changes (everything else on the page is kept):
 The current month's sales target must be in --targets, otherwise the build stops (exit code 3).
 """
 import argparse
+import config  # noqa: E402
 import datetime as dt
 import json
 import os
@@ -298,7 +299,7 @@ def main():
     os.umask(0o077)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
     html = open(a.html, encoding='utf-8').read()
-    targets = json.load(open(a.targets))
+    targets = config.load_targets(a.targets)
     st = json.load(open(a.summary)) if a.summary else None
     try:
         out, c = build(html, Raw(a.work), today, targets, st)
