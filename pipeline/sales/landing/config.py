@@ -49,3 +49,6 @@ LEAD_BUCKETS = ['当日', '前日', '2〜7日前', '8〜30日前', '31日以上�
 # Memo parsing for the timing of cancellations (used only when no 0:00 snapshot exists for the day)
 CANCEL_LINE = re.compile(r'キャンセル|ｷｬﾝｾﾙ|ムキャン|無キャン|不通|来院な|来院され|取り消|取消|ノーショー')
 SAME_DAY_WORDS = re.compile(r'当日キャンセル|当日ｷｬﾝｾﾙ|当日のキャンセル|来院なく|来院なし|来院されず|来院がなく|ムキャン|無キャン|ノーショー')
+
+# 「9月まとめ」 (SUMMARY) was written by hand before automation; later months get SUMMARIES entries
+LEGACY_SUMMARY = '2026-09'

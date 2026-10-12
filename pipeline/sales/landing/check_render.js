@@ -1,4 +1,4 @@
-// Open the 着地予想ダッシュボード in Chromium, show every tab (当日 / 今月 / 前月 / まとめ) and every day
+// Open the 着地予想ダッシュボード in Chromium, show every tab (当日 / 今月 / 前月 / every まとめ) and every day
 // of both months, and fail on a page error, a console error, or "NaN" / "undefined" / "Infinity" on screen.
 //
 // Usage: NODE_PATH=$(npm root -g) node pipeline/sales/landing/check_render.js PAGE.html [--dump OUT.json]
@@ -27,7 +27,8 @@ const path = require('path');
     texts[key] = t;
   };
   let views = 0;
-  for (const v of ['today', 'oct', 'past', 'sum']) {
+  const tabs = await page.$$eval('[role=tab][id^="vt-"]', b => b.map(x => x.id.slice(3)));  // incl. every 「◯月まとめ」
+  for (const v of tabs) {
     if (await page.$eval(`#vt-${v}`, b => b.hidden)) continue;  // e.g. the new month on its 1st day
     await page.click(`#vt-${v}`);
     await page.waitForTimeout(50);

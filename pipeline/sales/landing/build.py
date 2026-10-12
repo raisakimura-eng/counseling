@@ -14,7 +14,9 @@ What changes (everything else on the page is kept):
   * TODAY = forecast for --today from the reservations known now; TARGET = 売上目標の進捗.
   * On the 1st of a month the finished month moves to DAYS_BASE (the reference month), MONTH / EXTRA and
     the model coefficients (TODAY.coef) are recomputed from it, and the new month starts empty.
-  * SUMMARY (「9月まとめ」, a hand-written monthly review) is not regenerated.
+  * 「9月まとめ」 (SUMMARY, written by hand) is kept as it is. When a month is closed, its 「◯月まとめ」 tab is
+    added to SUMMARIES: the numbers are computed here, the sentences come from --summary. Without them
+    the numbers are written to --summary-todo and the build stops (exit code 4).
 The current month's sales target must be in --targets, otherwise the build stops (exit code 3).
 """
 import argparse
@@ -31,6 +33,39 @@ import page  # noqa: E402
 from data import JST, Raw, dlabel, month_days, wd  # noqa: E402
 
 TARGETS = os.path.join(os.path.dirname(HERE), 'targets.json')
+from config import LEGACY_SUMMARY  # noqa: E402
+TEXT_TEMPLATE = {
+    'cmpNote': '', 'weekNote': '',
+    'issues': [{'tag': '', 'text': ''} for _ in range(5)],
+    'okr': {'objective': '', 'targets': {'ratio': '', 'morning': '', 'multi': '', 'dn': '', 'course': '', 'same': ''}, 'note': ''},
+}
+
+
+class NeedSummary(Exception):
+    pass
+
+
+def missing_text(t, tpl=TEXT_TEMPLATE, path='text'):
+    """Paths of the sentences that are still empty (or missing) in a まとめ text block."""
+    out = []
+    if isinstance(tpl, dict):
+        if not isinstance(t, dict):
+            return [path]
+        for k, v in tpl.items():
+            out += missing_text(t.get(k), v, f'{path}.{k}')
+    elif isinstance(tpl, list):
+        if not isinstance(t, list) or len(t) != len(tpl):
+            return [f'{path} ({len(tpl)}件必要)']
+        for i, (x, v) in enumerate(zip(t, tpl)):
+            out += missing_text(x, v, f'{path}[{i}]')
+    elif not (isinstance(t, str) and t.strip()):
+        out.append(path)
+    return out
+
+
+def next_ym(ym):
+    y, m = map(int, ym.split('-'))
+    return f'{y + m // 12}-{m % 12 + 1:02d}'
 
 
 def label_date(lbl, year):
@@ -68,7 +103,7 @@ def base_from_page(consts):
             'fullBias': round(statistics.mean((core(r) - r['Aold']) / r['Aold'] for r in R), 3),
             'sd': {'allN': round(statistics.mean(r['sd']['n'] for r in R), 1), 'allPaid': round(sum(r['sd']['paid'] for r in R) / len(R))},
             'sd_wd': sd_wd, 'wavg': {w: round(statistics.mean(v)) for w, v in wk.items()},
-            'acc': {'wk': round(statistics.mean(abs(m[3] - loo(m, True)) / m[3] for m in M), 3),
+            'acc': {'wk': round(statistics.mean(abs(m[3] - loo(m, True)) / m[3] for m in M if sum(1 for x in M if wds[x[0]] == wds[m[0]]) > 1), 3),
                     'flat': round(statistics.mean(abs(m[3] - loo(m, False)) / m[3] for m in M), 3)}}
 
 
@@ -116,7 +151,7 @@ def gen_texts(consts, base_days_n, today):
         'footPast': (f'データ：KOS OpenAPI（予約・決済・購入・施術・プリペイドの統計）から自動で集計しています（{today.month}/{today.day} 0:00更新）。'
                      f'スタッフ（患者カテゴリ「NaA+HPMS」）と、インフルエンサー・PR枠（カテゴリ「インフルエンサー」ほか）の来院は、予想・客単価などの分析から除いています'
                      + (f'（{c}月：スタッフ{ex.get("staff", [0, 0])[0]}件・決済{ex.get("staff", [0, 0])[1]:,}円、インフルエンサー・PR{ex.get("influencer", [0, 0])[0]}件・決済{ex.get("influencer", [0, 0])[1]:,}円）' if ex else '')
-                     + '。売上目標の進捗は、これらを含むクリニック全体の決済額で計算しています。'
+                     + '。ただし、これらの来院で実際に支払われた金額（自費分）は着地結果（来院ベース）に含めています。売上目標の進捗は、これらを含むクリニック全体の決済額で計算しています。'
                      '予約時点の予想は、毎日0:00時点の予約から出した予想です（それより前の日は予約登録日から再現）。当日キャンセルは、0:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです（0:00時点の記録がない日は、予約状態「ノーショー」と予約メモの記載から判定）。'
                      '同じ日の別時間への振替は来院として数えています。売れた施術は施術実施額（施術チケット決済金額）で集計し、診察・麻酔・指名料は除いています。患者名は表示していません。'),
         'footToday': ('データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
@@ -137,12 +172,14 @@ def excl_counts(raw, days):
     return out
 
 
-def build(html, raw, today, targets):
+def build(html, raw, today, targets, summary_text=None):
     consts = page.get_consts(html)
     if not page.is_migrated(html):
         mon = seed(consts)
         html = page.migrate(html, mon)
         consts['MON'] = mon
+    html = page.migrate_summaries(html)
+    consts.setdefault('SUMMARIES', [])
     mon = consts['MON']
     T0 = consts['TODAY']
     yday = today - dt.timedelta(days=1)
@@ -197,10 +234,23 @@ def build(html, raw, today, targets):
     morning[dlabel(today)] = T['cur']
     consts['TODAY'] = T
     consts['TARGET'] = aggregate.target(raw, ym, today, T['cur'], goal, base, morning, prev_total, f'{mon["b"]}月', bdays)
-    # 4. write
+    # 4. 「◯月まとめ」 of the reference month, once it is closed (numbers here, sentences from SUMMARY_TEXT)
+    base_ym = f"{mon['by']}-{mon['b']:02d}"
+    if base_ym != LEGACY_SUMMARY and base_ym not in {s_['key'] for s_ in consts['SUMMARIES']}:
+        nym = next_ym(base_ym)
+        S = aggregate.month_summary(raw, base_ym, consts['DAYS_BASE'], targets.get(base_ym),
+                                    {'label': f'{int(nym[5:])}月', 'target': targets.get(nym), 'days': len(month_days(nym))})
+        st = summary_text if summary_text and summary_text.get('month') == base_ym else None
+        if st is None or missing_text(st.get('text')):
+            raise NeedSummary({'month': base_ym, 'label': S['label'], 'numbers': S, 'facts': aggregate.summary_facts(S),
+                               'missing': missing_text((st or {}).get('text')),
+                               'text': (st or {}).get('text') or json.loads(json.dumps(TEXT_TEMPLATE))})
+        S['text'] = st['text']
+        consts['SUMMARIES'].append(S)
+    # 5. write
     texts = gen_texts(consts, len(bdays), today)
     del T['_excl']
-    out = page.set_consts(html, {k: consts[k] for k in ['DAYS_BASE', 'DAYS_CUR', 'MON', 'MONTH', 'TODAY', 'EXTRA', 'TARGET']})
+    out = page.set_consts(html, {k: consts[k] for k in ['DAYS_BASE', 'DAYS_CUR', 'MON', 'MONTH', 'TODAY', 'EXTRA', 'TARGET', 'SUMMARIES']})
     out = page.set_gen(out, texts)
     out = page.set_month_svg_label(out, f'{mon["b"]}月1日から{len(consts["MONTH"])}日の日別、来院者の予約金額と決済額')
     return out, consts
@@ -236,12 +286,23 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--today', help='JST date of the new day (default: today in JST)')
     ap.add_argument('--targets', default=TARGETS)
+    ap.add_argument('--summary', help='summary_todo.json whose "text" has been written (makes the 月まとめ tab)')
+    ap.add_argument('--summary-todo', help='where to write the numbers when a 月まとめ is needed (default $WORK/summary_todo.json)')
     a = ap.parse_args()
     os.umask(0o077)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
     html = open(a.html, encoding='utf-8').read()
     targets = json.load(open(a.targets))
-    out, c = build(html, Raw(a.work), today, targets)
+    st = json.load(open(a.summary)) if a.summary else None
+    try:
+        out, c = build(html, Raw(a.work), today, targets, st)
+    except NeedSummary as e:
+        todo = a.summary or a.summary_todo or os.path.join(a.work, 'summary_todo.json')
+        json.dump(e.args[0], open(todo, 'w'), ensure_ascii=False, indent=1)
+        miss = e.args[0]['missing']
+        sys.stderr.write(f"SUMMARY NEEDED: {e.args[0]['label']}まとめの文章を {todo} の \"text\" に書いてから --summary {todo} で作り直す"
+                         + (f"（未記入: {', '.join(miss[:8])}{' ほか' if len(miss) > 8 else ''}）" if a.summary else '') + '\n')
+        sys.exit(4)
     open(a.out, 'w', encoding='utf-8').write(out)
     t = c['TARGET']
     act = [r for r in t['rows'] if r[3] == 'actual']

@@ -10,12 +10,15 @@
 
 It does not deploy. The new page is $WORK/new.html; publishing is a separate, deliberate step.
 Exit codes: 0 ready, 3 the month's sales target is missing (ask for it: pipeline/sales/targets.json),
+4 a closed month needs its 「◯月まとめ」 sentences: write the "text" of $WORK/summary_todo.json
+  (guidelines: README.md 「月まとめの文章」) and run again with --summary $WORK/summary_todo.json,
 1 anything else (build, sanity or render check failed).
 """
 import argparse
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -24,6 +27,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 import config  # noqa: E402
 import page  # noqa: E402
+
 from data import JST  # noqa: E402
 
 WORK = os.environ.get('WORK', '/tmp/sales-work/landing')
@@ -39,6 +43,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--today', help='JST date of the new day (default: today in JST)')
     ap.add_argument('--html', help='use this page instead of downloading it from Netlify')
+    ap.add_argument('--summary', help='$WORK/summary_todo.json after its "text" was written: makes the 月まとめ tab')
     a = ap.parse_args()
     os.umask(0o077)
     os.makedirs(WORK, exist_ok=True)
@@ -58,17 +63,38 @@ def main():
         import netlify
         netlify.download(config.SITE, cur)
     consts = page.get_consts(open(cur, encoding='utf-8').read())
+    new = os.path.join(WORK, 'new.html')
     if consts['TODAY']['date'] == f'{today.month}/{today.day}':
         print(f'NOTHING TO DO: the page already shows the forecast for {today}.')
+        shutil.copy(cur, new)  # so that publishing new.html is harmless
         return
-    # the reference month is needed again only when the month rolls over today
-    first = (yday.replace(day=1) if today.day == 1 else today.replace(day=1))
+    # which month will be the reference month after this run, and does it still need its 月まとめ?
+    mon = consts.get('MON')
+    if mon:
+        cur_ym = f"{mon['y']}-{mon['c']:02d}"
+        base_ym = cur_ym if today.strftime('%Y-%m') != cur_ym else f"{mon['by']}-{mon['b']:02d}"
+    else:
+        base_ym = config.LEGACY_SUMMARY
+    need_summary = base_ym != config.LEGACY_SUMMARY and base_ym not in {x['key'] for x in consts.get('SUMMARIES', [])}
+    if need_summary:
+        # the まとめ compares with the two months before: fetch them too (closed months are cached in $WORK)
+        y, m = map(int, base_ym.split('-'))
+        k = y * 12 + m - 1 - 2
+        first = dt.date(k // 12, k % 12 + 1, 1)
+    else:
+        first = (yday.replace(day=1) if today.day == 1 else today.replace(day=1))
     month_end = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
-    rc = py('fetch.py', '--from', first, '--to', today, '--future-to', month_end, '--work', WORK, '--visitors', first.strftime('%Y-%m'))
+    vis_from = base_ym if need_summary else first.strftime('%Y-%m')
+    rc = py('fetch.py', '--from', first, '--to', today, '--future-to', month_end, '--work', WORK, '--visitors', vis_from)
     if rc:
         sys.exit(f'STOP: fetching KOS data failed (exit {rc}); nothing built')
-    new = os.path.join(WORK, 'new.html')
-    rc = py('build.py', '--html', cur, '--work', WORK, '--out', new, '--today', today)
+    todo = os.path.join(WORK, 'summary_todo.json')
+    rc = py('build.py', '--html', cur, '--work', WORK, '--out', new, '--today', today,
+            *(['--summary', a.summary] if a.summary else ['--summary-todo', todo]))
+    if rc == 4:
+        print(f'SUMMARY NEEDED: {base_ym[5:].lstrip("0")}月まとめの文章を {todo} の "text" に書き（指針: pipeline/sales/landing/README.md「月まとめの文章」）、'
+              f'daily.py --summary {todo} で作り直してください。公開できる状態ではありません。')
+        sys.exit(4)
     if rc:
         sys.exit(rc)
     c = page.get_consts(open(new, encoding='utf-8').read())

@@ -19,7 +19,7 @@ edits (each old snippet must occur exactly as expected), so that a new month nee
 import json
 import re
 
-DATA_CONSTS = ['DAYS_BASE', 'DAYS_CUR', 'MON', 'MONTH', 'TODAY', 'EXTRA', 'TARGET', 'SUMMARY']
+DATA_CONSTS = ['DAYS_BASE', 'DAYS_CUR', 'MON', 'MONTH', 'TODAY', 'EXTRA', 'TARGET', 'SUMMARY', 'SUMMARIES']
 LINE = re.compile(r'^const ([A-Z_]+) = (.*);$', re.M)
 
 # (old, new, expected count) — applied once, to a page that is not migrated yet
@@ -171,3 +171,135 @@ def set_gen(html, texts):
 
 def set_month_svg_label(html, label):
     return re.sub(r'(<svg id="month" role="img" aria-label=")[^"]*(")', lambda m: m.group(1) + label + m.group(2), html, count=1)
+
+
+# ---------------------------------------------------------------- stage 2: monthly まとめ tabs ----
+# 「9月まとめ」 (SUMMARY, written by hand) stays exactly as it is. Every later month gets an entry in
+# SUMMARIES (numbers from build.py, sentences written by the daily job's Claude) and its own tab
+# 「◯月まとめ」, drawn by summaryViewX(), a data-driven copy of summaryView().
+SUMMARY_VIEW_X = r'''
+  function summaryViewX(S){
+    const Ms = S.months, cur = Ms[2], X = S.text, L = S.label, N = S.next;
+    const tr = (lab, key, fmt, better) => {
+      const v = Ms.map(m => m[key]); const d = v[2] - v[1];
+      const good = better === 'up' ? d >= 0 : better === 'down' ? d <= 0 : null;
+      return `<tr><td class="name">${lab}</td>${v.map((x, k) => `<td${k === 2 ? ' style="font-weight:700;color:var(--ink)"' : ''}>${fmt(x)}</td>`).join('')}<td class="${good == null ? 'muted' : good ? 'pos' : 'warn'}">${good == null ? '—' : good ? '改善' : '悪化'}</td></tr>`;
+    };
+    const yf = v => yen(v) + '円', nf = v => v.toFixed(1) + '件', pf = v => pct(v), tf = v => v.toFixed(2), mf = v => (v >= 0 ? '+' : '−') + (Math.abs(v) / 1e4).toFixed(1) + '万円';
+    const wkMax = Math.max(...S.week.map(w => w[1])), over = S.target && S.total >= S.target, perT = S.target ? S.target / S.days : 0;
+    const gap = (S.C - S.M) / S.M;
+    document.getElementById('viewSum').innerHTML = `
+    <p class="daylabel">${S.y}年${S.m}月のまとめ</p>
+    <div class="resbar resbar5">
+      <div><span class="k">${L}の売上（決済ベース）</span><span class="v">${yen(S.total)}<small>円</small></span><span class="n">${S.target ? `目標${yen(S.target)}円の${pct(S.total / S.target)}` : '売上目標は未設定'}</span></div>
+      <div><span class="k">目標との差</span><span class="v ${over ? 'pos' : 'warn'}">${S.target ? sgn(S.total - S.target) : '—'}<small>${S.target ? '円' : ''}</small></span><span class="n">${S.target ? `1日あたり${yen(Math.abs(S.target - S.total) / S.days)}円の${over ? '超過' : '不足'}` : ''}</span></div>
+      <div><span class="k">1日あたりの売上（決済ベース）</span><span class="v">${yen(S.perdayAll)}<small>円</small></span><span class="n">${S.target ? `日割り目標${yen(perT)}円の${pct(S.perdayAll / perT)}` : ''}</span></div>
+      <div><span class="k">予約時点（朝）の予想</span><span class="v">${yen(S.M)}<small>円</small></span><span class="n">実決済は${yen(S.C)}円（来院ベース）</span></div>
+      <div><span class="k">実決済 − 予約時点（朝）の予想</span><span class="v ${gap >= 0 ? 'pos' : 'warn'}">${sgn(S.C - S.M)}<small>円</small></span><span class="n">${gap >= 0 ? '+' : '−'}${pct(Math.abs(gap))}、${S.days}日中${S.plusDays}日でプラス</span></div>
+    </div>
+    <div class="stack">
+    <section class="panel" aria-labelledby="h-xbr">
+      <div class="panel-head"><h2 id="h-xbr">売上の数字の違い（決済ベースと来院ベース）</h2><span class="muted">${S.m}/1〜${S.m}/${S.days}</span></div>
+      <div class="grid2" style="margin-top:0">
+        <div class="scroll"><table><thead><tr><th scope="col">決済履歴（お金の受け取り）</th><th scope="col">金額</th></tr></thead><tbody>
+          <tr><td class="name">カード</td><td>${yen(S.pay.card)}円</td></tr>
+          <tr><td class="name">現金</td><td>${yen(S.pay.cash)}円</td></tr>
+          <tr><td class="name">事前決済（カンナムオンニ）</td><td>${yen(S.pay.pre)}円</td></tr>
+          <tr><td class="name">決済のキャンセル（${S.pay.cancelN}件）・返金</td><td class="warn">${sgn(S.pay.cancel + S.pay.refund)}円</td></tr>
+        </tbody><tfoot><tr><td>決済ベースの売上</td><td>${yen(S.total)}円</td></tr></tfoot></table></div>
+        <div class="scroll"><table><thead><tr><th scope="col">来院ベース（施術の決済総額）との違い</th><th scope="col">金額</th></tr></thead><tbody>
+          <tr><td class="name">来院時の施術決済総額</td><td>${yen(S.totalVisit)}円</td></tr>
+          <tr><td class="name">＋ プリペイドのチャージ（${S.bridge.prepChargeN}件）</td><td class="pos">+${yen(S.bridge.prepCharge)}円</td></tr>
+          <tr><td class="name">− プリペイドでの支払い（すでに受け取り済み）</td><td class="warn">−${yen(S.bridge.prepUse)}円</td></tr>
+          <tr><td class="name">＋ 施術以外の品目（物販など）</td><td class="pos">+${yen(S.bridge.goods)}円</td></tr>
+          <tr><td class="name">そのほか（決済のキャンセル・日付のずれなど）</td><td>${sgn(S.total - (S.totalVisit + S.bridge.prepCharge - S.bridge.prepUse + S.bridge.goods))}円</td></tr>
+        </tbody><tfoot><tr><td>決済ベースの売上</td><td>${yen(S.total)}円</td></tr></tfoot></table></div>
+      </div>
+      <p class="foot">決済ベースは「その月に受け取ったお金」、来院ベースは「その月に来院した方の施術の金額」です。プリペイドを買った月は決済ベースが大きく、プリペイドで支払った月は来院ベースが大きくなります。日々の当日ページ・日別の分析は来院ベース、月の売上の確定は決済ベースで見ています。</p>
+    </section>
+    <section class="panel" aria-labelledby="h-x3m">
+      <div class="panel-head"><h2 id="h-x3m">${Ms[0].m}・${Ms[1].m}との比較</h2><span class="muted">スタッフ・インフルエンサー除く。評価は${Ms[1].m}→${Ms[2].m}の変化</span></div>
+      <div class="scroll"><table><thead><tr><th scope="col">指標</th>${Ms.map(m => `<th scope="col">${m.m}</th>`).join('')}<th scope="col">評価</th></tr></thead><tbody>
+        ${tr('1日あたりの売上', 'perday', yf, 'up')}${tr('1日あたりの来院', 'vday', nf, 'up')}${tr('客単価', 'aov', yf, 'up')}
+        ${tr('1日あたりの初診', 'first', nf, 'up')}${tr('1日あたりの再診', 'rep', nf, 'up')}
+        ${tr('1施術だけの方の割合', 'single', pf, 'down')}${tr('1人あたりの施術数', 'tpp', tf, 'up')}
+        ${tr('増額（1日あたり）', 'up', mf, 'up')}${tr('減額（1日あたり）', 'dn', mf, 'up')}
+        ${tr('メニュー未入力の割合', 'nm', pf, 'down')}${tr('コース消化の0円来院（1日あたり）', 'course', nf, null)}
+        <tr><td class="name">プリペイドの購入</td>${Ms.map((m, k) => `<td${k === 2 ? ' style="font-weight:700;color:var(--ink)"' : ''}>${m.prep[0]}件・${Math.round(m.prep[1] / 1e4)}万円</td>`).join('')}<td class="${Ms[2].prep[1] >= Ms[1].prep[1] ? 'pos' : 'warn'}">${Ms[2].prep[1] >= Ms[1].prep[1] ? '改善' : '悪化'}</td></tr>
+      </tbody></table></div>
+      <p class="foot">${esc(X.cmpNote)}${L}は${S.m}/1〜${S.m}/${S.days}の集計です。</p>
+    </section>
+    <div class="grid2" style="margin-top:0">
+    <section class="panel" aria-labelledby="h-xwk">
+      <div class="panel-head"><h2 id="h-xwk">曜日別</h2><span class="muted">売上は全体、上乗せ率は実決済 ÷ 朝の予想</span></div>
+      ${S.week.map(w => `<div class="agerow" style="--lw:40px"><span class="lab">${w[0]}</span><div class="track"><i style="width:${Math.max(1, w[1] / wkMax * 68).toFixed(1)}%;background:var(--blue)"></i><em>${yen(w[1])}円</em></div><span class="val ${w[2] >= 0 ? 'pos' : 'warn'}"><b style="color:inherit">${w[2] >= 0 ? '+' : ''}${pct(w[2])}</b></span><span class="val"></span></div>`).join('')}
+      <p class="foot">${esc(X.weekNote)}</p>
+    </section>
+    <section class="panel" aria-labelledby="h-xtop">
+      <div class="panel-head"><h2 id="h-xtop">売れた施術</h2><span class="muted">施術実施額の上位5</span></div>
+      ${rankBlock(S.top, '人')}
+      <div class="flow3" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:14px">
+        <div class="got"><span class="k">プリペイドの購入</span><span class="v">${cur.prep[0]}<small>件</small></span><span class="n">${yen(cur.prep[1])}円（${Ms[0].m}${Ms[0].prep[0]}件、${Ms[1].m}${Ms[1].prep[0]}件）</span></div>
+        <div><span class="k">当日予約</span><span class="v">${S.sd.n}<small>件/日</small></span><span class="n">月${yen(S.sd.paid)}円の決済</span></div>
+      </div>
+    </section>
+    </div>
+    <div class="grid2" style="margin-top:0">
+    <section class="panel" aria-labelledby="h-xch"><div class="panel-head"><h2 id="h-xch">経路別</h2><span class="muted">来院20件以上</span></div><div style="--lw:132px">${ageBlock(S.ch, '経路')}</div></section>
+    <section class="panel" aria-labelledby="h-xag"><div class="panel-head"><h2 id="h-xag">年代別</h2><span class="muted">来院20件以上</span></div>${ageBlock(S.ages)}</section>
+    </div>
+    <section class="panel" aria-labelledby="h-xiss">
+      <div class="panel-head"><h2 id="h-xiss">${L}の課題</h2></div>
+      <ol class="factors">${X.issues.map(i => `<li><span class="fk neg">${esc(i.tag)}</span><p>${esc(i.text)}</p><b></b></li>`).join('')}</ol>
+    </section>
+    <section class="panel" aria-labelledby="h-xokr">
+      <div class="panel-head"><h2 id="h-xokr">${N.label}のOKR（案）</h2><span class="muted">${N.target ? `売上目標 ${(N.target / 1e4).toLocaleString('ja-JP')}万円（1日約${Math.round(N.target / N.days / 1e4)}万円）` : '売上目標 未設定'}</span></div>
+      <p style="color:var(--ink);font-weight:700;margin-bottom:10px">Objective：${esc(X.okr.objective)}</p>
+      <div class="scroll"><table><thead><tr><th scope="col">KR</th><th scope="col">${L}の実績</th><th scope="col">${N.label}の目標（案）</th></tr></thead><tbody>
+        <tr><td class="name">実決済 ÷ 予約時点（朝）の予想</td><td>${gap >= 0 ? '+' : '−'}${pct(Math.abs(gap))}</td><td><b>${esc(X.okr.targets.ratio)}</b></td></tr>
+        <tr><td class="name">予約時点（朝）の予想（1日平均）</td><td>${yen(S.morningPerDay)}円</td><td><b>${esc(X.okr.targets.morning)}</b></td></tr>
+        <tr><td class="name">2施術以上の方の割合</td><td>${pct(1 - cur.single)}</td><td><b>${esc(X.okr.targets.multi)}</b></td></tr>
+        <tr><td class="name">減額（1日あたり）</td><td>${mf(cur.dn)}</td><td><b>${esc(X.okr.targets.dn)}</b></td></tr>
+        <tr><td class="name">コース消化の来院での追加提案率</td><td>未計測</td><td><b>${esc(X.okr.targets.course)}</b></td></tr>
+        <tr><td class="name">当日キャンセル率</td><td>${pct(S.same)}</td><td><b>${esc(X.okr.targets.same)}</b></td></tr>
+      </tbody></table></div>
+      <p class="foot">${esc(X.okr.note)}</p>
+    </section>
+    </div>`;
+  }
+'''
+
+JS_EDITS_2 = [
+    ("  function hoursChart(){", SUMMARY_VIEW_X + "\n  function hoursChart(){", 1),
+    ("    if (v === 'oct' && !DAYS_CUR.length) v = 'today';\n",
+     "    if (v === 'oct' && !DAYS_CUR.length) v = 'today';\n"
+     "    const SX = SUMMARIES.find(s => 'sum-' + s.key === v);\n    if (v.startsWith('sum-') && !SX) v = 'today';\n", 1),
+    ("    const map = {today: 'viewToday', past: 'viewPast', sum: 'viewSum', oct: 'viewPast'};\n"
+     "    ['today', 'past', 'sum', 'oct'].forEach(k =>",
+     "    const map = {today: 'viewToday', past: 'viewPast', sum: 'viewSum', oct: 'viewPast'};\n"
+     "    if (SX) { map[v] = 'viewSum'; summaryViewX(SX); } else if (v === 'sum') summaryView();\n"
+     "    VIEWS.forEach(k =>", 1),
+    ("v === 'sum' ? '2026年9月のまとめ' : `${yy}",
+     "v === 'sum' ? '2026年9月のまとめ' : SX ? `${SX.y}年${SX.m}月のまとめ` : `${yy}", 1),
+    ("  const VIEWS = ['today', 'oct', 'past', 'sum'];",
+     "  { let prev = document.getElementById('vt-sum');\n"
+     "    SUMMARIES.forEach(s => { const b = prev.cloneNode(false); b.id = 'vt-sum-' + s.key; b.textContent = s.label + 'まとめ'; b.setAttribute('aria-selected', 'false'); b.tabIndex = -1; prev.after(b); prev = b; }); }\n"
+     "  const VIEWS = ['today', 'oct', 'past', 'sum', ...SUMMARIES.map(s => 'sum-' + s.key)];", 1),
+]
+
+
+def migrate_summaries(html):
+    """Stage 2 (idempotent): SUMMARIES constant, summaryViewX and one tab per entry."""
+    if 'const SUMMARIES = ' in html:
+        return html
+    a, b = script_bounds(html)
+    js = html[a:b]
+    for old, new, n in JS_EDITS_2:
+        c = js.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page code changed; expected {n}× {old[:60]!r}, found {c}')
+        js = js.replace(old, new)
+    i = js.index('\nconst SUMMARY = ')
+    j = js.index('\n', i + 1)
+    js = js[:j] + '\nconst SUMMARIES = [];' + js[j:]
+    return html[:a] + js + html[b:]

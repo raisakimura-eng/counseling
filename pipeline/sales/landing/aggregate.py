@@ -423,7 +423,8 @@ def base_stats(raw, base_days, base_records):
     def loo(d, same_wd):
         o = [allv[e] for e in base_days if e != d and (wd(e) == wd(d) or not same_wd)]
         return statistics.mean(o)
-    acc = {'wk': round(statistics.mean(abs(allv[d] - loo(d, True)) / allv[d] for d in base_days), 3),
+    peers = [d for d in base_days if sum(1 for e in base_days if wd(e) == wd(d)) > 1]  # a weekday seen once has no peer
+    acc = {'wk': round(statistics.mean(abs(allv[d] - loo(d, True)) / allv[d] for d in peers), 3) if peers else None,
            'flat': round(statistics.mean(abs(allv[d] - loo(d, False)) / allv[d] for d in base_days), 3)}
     R = base_records
     band = statistics.mean(abs(r['C'] - r['Amorning']) / r['Amorning'] for r in R)
@@ -602,3 +603,113 @@ def target(raw, ym, today, today_cur, goal, base_stats_, morning, prev_total, pr
     return {'target': goal, 'days': len(days), 'rows': rows, 'wavg': base_stats_['wavg'], 'acc': base_stats_['acc'],
             'month': f'{int(ym[5:])}月', 'prev': {'month': prev_label, 'total': prev_total}, 'morning': morning,
             'resvMonth': resv_month(raw, today, act, rest, base_days, base_stats_['wavg']) if rest else None}
+
+
+# ---------------------------------------------------------------- 月まとめ ----
+
+def month_metrics(raw, days, label):
+    """One column of 「前2か月との比較」 (スタッフ・インフルエンサー除く), from the API."""
+    X = [Day(raw, d) for d in days]
+    vis = [r for x in X for r in x.visited]
+    n = len(days)
+    core = sum(paid(r) for r in vis)
+    payers, kinds, ups, dns, nm, course = 0, [], 0, 0, 0, 0
+    for x in X:
+        for r in x.visited:
+            k = len({t.get('productTitle') for t in x.tasks.get(r['visitorId'], [])})
+            if paid(r) > 0:
+                payers += 1
+                kinds.append(k)
+            elif k:
+                course += 1
+            if 0 < resv(r) < paid(r):
+                ups += paid(r) - resv(r)
+            if 0 < paid(r) < resv(r):
+                dns += paid(r) - resv(r)
+            nm += resv(r) == 0
+    buys = [e for d in days for e in raw.prepaid.get(d, []) if e.get('chargingAmountType') == 'BALANCE' and e['chargingType'] == 'CHARGE']
+    return {'m': label, 'perday': round(core / n), 'vday': round(len(vis) / n, 1), 'aov': round(core / len(vis)) if vis else 0,
+            'first': round(sum(1 for r in vis if vtype(r) == '初診') / n, 1), 'rep': round(sum(1 for r in vis if vtype(r) == '再診') / n, 1),
+            'single': round(sum(1 for k in kinds if k == 1) / payers, 3) if payers else 0,
+            'tpp': round(sum(kinds) / payers, 2) if payers else 0, 'up': round(ups / n), 'dn': round(dns / n),
+            'nm': round(nm / len(vis), 3) if vis else 0, 'course': round(course / n, 1),
+            'prep': [len(buys), sum(money(e.get('chargingAmountV2')) for e in buys)]}
+
+
+def month_summary(raw, ym, recs, target, nxt):
+    """Numbers of the 「◯月まとめ」 tab for month YM. RECS = the page's day records of that month
+    (朝の予想 is only in them). NXT = {'label', 'target', 'days'} of the following month (OKR)."""
+    from data import month_days
+    import statistics
+    days = month_days(ym)
+    y, m = map(int, ym.split('-'))
+
+    def prev(k):
+        mm = (y * 12 + m - 1 - k)
+        return f'{mm // 12}-{mm % 12 + 1:02d}'
+    months = [month_metrics(raw, month_days(prev(k)), f'{int(prev(k)[5:])}月') for k in (2, 1, 0)]
+    core = lambda r: r['C'] - r.get('Cex', 0)  # noqa: E731
+    pb = collections.Counter()
+    for d in days:
+        for k, v in pay_bridge(raw, d).items():
+            pb[k] += v
+    pp = [e for d in days for e in raw.prepaid.get(d, []) if e.get('chargingAmountType') == 'BALANCE']
+    charges = [e for e in pp if e['chargingType'] == 'CHARGE']
+    use = -sum(money(e.get('chargingAmountV2')) for e in pp if e['chargingType'] == 'PAYMENT') \
+        - sum(money(e.get('chargingAmountV2')) for e in pp if e['chargingType'] == 'PAYMENT_CANCEL')
+    allv = {d: visit_total_all(raw, d) for d in days}
+    week = []
+    for w in '月火水木金土日':
+        rr = [r for r in recs if r['wd'] == w]
+        dd = [d for d in days if wd(d) == w]
+        if rr:
+            week.append([w, round(statistics.mean(allv[d] for d in dd)), round(sum(map(core, rr)) / sum(r['Amorning'] for r in rr) - 1, 3)])
+
+    def agg(key, order=None):
+        g = {}
+        for r in recs:
+            for a in r[key]:
+                e = g.setdefault(a[0], [a[0], 0, 0, 0])
+                for i in (1, 2, 3):
+                    e[i] += a[i]
+        v = [e for e in g.values() if e[1] >= 20]
+        return sorted(v, key=lambda e: order.index(e[0]) if order and e[0] in order else 99) if order else sorted(v, key=lambda e: -e[2])
+    total = pb['total']
+    M = sum(r['Amorning'] for r in recs)
+    C = sum(r['C'] for r in recs)
+    n = len(days)
+    S = {'key': ym, 'y': y, 'm': m, 'label': f'{m}月', 'total': total, 'target': target, 'days': n,
+         'perdayAll': round(total / n), 'M': M, 'C': C, 'plusDays': sum(1 for r in recs if r['C'] > r['Amorning']),
+         'sd': {'n': round(statistics.mean(r['sd']['n'] for r in recs), 1), 'paid': sum(r['sd']['paid'] for r in recs)},
+         'same': round(sum(r['sameN'] for r in recs) / sum(r['bookN'] for r in recs), 3),
+         'canc': round(sum(r['cancN'] for r in recs) / sum(r['fullN'] for r in recs), 3),
+         'months': months, 'week': week, 'ch': agg('ch'), 'ages': agg('ages', config.AGE_BANDS),
+         'top': extra(raw, days)['trTop'][:5], 'morningPerDay': round(M / n), 'totalVisit': sum(allv.values()),
+         'pay': {k: pb[k] for k in ('card', 'cash', 'pre', 'cancel', 'refund', 'cancelN')},
+         'bridge': {'prepCharge': sum(money(e.get('chargingAmountV2')) for e in charges), 'prepChargeN': len(charges),
+                    'prepUse': use, 'goods': pb['goods']},
+         'next': nxt}
+    S['pay']['approved'] = pb['card'] + pb['cash'] + pb['pre']
+    return S
+
+
+def summary_facts(S):
+    """Plain facts for the person / Claude who writes the まとめ sentences (all derived from S)."""
+    cur, prv = S['months'][2], S['months'][1]
+    per_t = S['target'] / S['days'] if S['target'] else None
+    keys = {'perday': '1日あたりの売上', 'vday': '1日あたりの来院', 'aov': '客単価', 'first': '1日あたりの初診', 'rep': '1日あたりの再診',
+            'single': '1施術だけの方の割合', 'tpp': '1人あたりの施術数', 'up': '増額（1日あたり）', 'dn': '減額（1日あたり）',
+            'nm': 'メニュー未入力の割合', 'course': 'コース消化の0円来院（1日あたり）'}
+    return {
+        '目標達成率': round(S['total'] / S['target'], 3) if S['target'] else None,
+        '日割り目標（1日あたり）': round(per_t) if per_t else None,
+        '実決済÷朝の予想−1': round(S['C'] / S['M'] - 1, 3),
+        '前2か月との比較（古い順）': {keys[k]: [m[k] for m in S['months']] for k in keys},
+        '前月からの変化': {keys[k]: round(cur[k] - prv[k], 3) for k in keys},
+        '曜日別（売上の1日平均、日割り目標との差、上乗せ率）': [[w[0], w[1], (w[1] - round(per_t)) if per_t else None, w[2]] for w in S['week']],
+        '経路別（来院20件以上: 名前, 来院, 決済額, うち初診, 客単価）': [[c[0], c[1], c[2], c[3], round(c[2] / c[1])] for c in S['ch']],
+        '年代別（来院20件以上: 年代, 来院, 決済額, うち初診, 客単価）': [[c[0], c[1], c[2], c[3], round(c[2] / c[1])] for c in S['ages']],
+        '売れた施術（上位5: 名前, 人数, 金額）': S['top'],
+        '当日キャンセル率': S['same'], 'キャンセル率（全予約）': S['canc'],
+        '翌月': S['next'],
+    }
