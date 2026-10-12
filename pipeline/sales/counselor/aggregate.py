@@ -11,7 +11,7 @@
     表記ゆれ（例: "sayaka kudo"）は MAIN の表記に大文字小文字を無視して寄せる。
   - customers = 患者（visitorId）のユニーク数（月ごと）。ALL / VOCWIN は月の値の合計（延べ）、
     unique_customers は期間内の実人数。VOCWIN（VOC 全期間を選んだときの「同期間の販売実績」）は
-    公開版に合わせて「VOC の月のうち最後の月を除いた月」の合計（2026-10-10 時点では 8〜9月）。
+    VOC の月すべて（8月〜当月）の合計。
   - revenue = 会計金額（cost.totalAmount、割引・返金反映後）の合計。
   - procs = tx = 明細数。バンドル（procedureConfigurations が複数）は施術数に展開。
   - prepaid = 購入項目タイプ PREPAID_CARD_PRODUCT（項目分類「プリペイドカード」）。
@@ -29,6 +29,8 @@
     クリニック全体の値に入る）。初診 = isFirstProcedureSchedule。
 - VOC（満足度調査）: 提出日（JST）で月を分ける。2026-08-10 以降。
   - カウンセラー別 =「カウンセリングの質はいかがでしたか」の評価対象（担当カウンセラー）ごと。
+  - 共用アカウント（staff_roles.csv の備考「集計から除外」）宛ての評価・コメントは、クリニック全体の
+    スコアを含めて VOC から除く（2026-10-12 決定。会計側の共用アカウントの扱いは変えない）。
   - チャネル = 回答者のカルテ番号 → 購入データの患者流入チャネル。
   - コメント = カウンセラー宛ての自由記述（評価対象ごと。「なし」も含めてそのまま。分類ラベルは無い）。
     ★ はその回答のカウンセリング評価の平均。
@@ -254,7 +256,7 @@ def score_block(xs, dist=False):
     return o
 
 
-def voc_block(answers, main, exclude_shared=False):
+def voc_block(answers, main, exclude_shared=True):
     clinic, byc = collections.defaultdict(list), collections.defaultdict(list)
     for a in answers:
         for kind, lst in a['rat'].items():
@@ -268,22 +270,23 @@ def voc_block(answers, main, exclude_shared=False):
                 by_counselor={n: score_block(v, dist=True) for n, v in sorted(byc.items())})
 
 
-def comments(answers):
+def comments(answers, exclude_shared=True):
     """カウンセラーごとのコメント一覧（新しい順）。本文はそのカウンセラー宛ての自由記述、
-    s はその回答のカウンセリング評価の平均（1回の来院で複数名を評価した場合は全員の平均。公開版と同じ）。"""
+    s はその回答のカウンセリング評価の平均（1回の来院で複数名を評価した場合は全員の平均）。
+    exclude_shared: 共用アカウント宛ての評価・コメントを除く（既定。2026-10-12 のユーザー決定）。"""
     out = collections.defaultdict(list)
     for a in sorted(answers, key=lambda a: a['ts'], reverse=True):
-        cs = [x for _, x in a['rat'].get('カウンセラー') or []]
+        cs = [x for w, x in a['rat'].get('カウンセラー') or [] if not (exclude_shared and w in SHARED)]
         s = sum(cs) / len(cs) if cs else None
         for who, text in a['comments']:
-            if who:
+            if who and not (exclude_shared and who in SHARED):
                 out[who].append(dict(t=text, s=s, d=a['date'].isoformat(), c=a['ch']))
     return dict(out)
 
 
 # ---------------------------------------------------------------- 全体
 
-def build(purchases, schedules, answers, last_date, voc_last=None, visit_last=None, main=MAIN, exclude_shared_voc=False):
+def build(purchases, schedules, answers, last_date, voc_last=None, visit_last=None, main=MAIN, exclude_shared_voc=True):
     """整形済みの行 → D。months は開院月から last_date の月まで。"""
     months, m = [], OPEN_DAY.replace(day=1)
     while m <= last_date:
@@ -292,7 +295,7 @@ def build(purchases, schedules, answers, last_date, voc_last=None, visit_last=No
     purchases = [r for r in purchases if OPEN_DAY <= r['date'] <= last_date]
     schedules = [x for x in schedules if OPEN_DAY <= x['date'] <= (visit_last or last_date)]
     voc_months = [mm for mm in months if mm >= ym(VOC_START)]
-    vocwin = voc_months[:-1] if len(voc_months) > 1 else voc_months   # 公開版の VOCWIN は「締めた VOC 月」の合計
+    vocwin = voc_months   # VOC 全期間と同じ月（2026-10-12 決定。旧公開版は最後の VOC 月を含めていなかった）
 
     by = collections.defaultdict(list)            # (who|None, ch, m) -> rows ; who None = クリニック全体
     for r in purchases:
@@ -355,8 +358,8 @@ def build(purchases, schedules, answers, last_date, voc_last=None, visit_last=No
         sel = [a for a in answers if ch == 'ALL' or a['ch'] == ch]
         voc[ch] = {mm: voc_block([a for a in sel if a['m'] == mm], main, exclude_shared_voc) for mm in voc_months}
         voc[ch]['ALL'] = voc_block(sel, main, exclude_shared_voc)
-    com = {mm: comments([a for a in answers if a['m'] == mm]) for mm in voc_months}
-    com['ALL'] = comments(answers)
+    com = {mm: comments([a for a in answers if a['m'] == mm], exclude_shared_voc) for mm in voc_months}
+    com['ALL'] = comments(answers, exclude_shared_voc)
     com = {p: {n: v for n, v in sorted(d.items()) if n in main} for p, d in com.items()}
 
     days = collections.defaultdict(set)

@@ -24,7 +24,7 @@ def month_keys(d0, d1):
     return [m for m, _, _ in fetch.months(d0, d1)]
 
 
-def load(work, last_date, voc_last=None, visit_last=None, export_gaps=False, exclude_shared_voc=False, main=A.MAIN):
+def load(work, last_date, voc_last=None, visit_last=None, export_gaps=False, exclude_shared_voc=True, main=A.MAIN):
     yms = month_keys(A.OPEN_DAY, last_date)
     pr = A.purchase_rows(fetch.load(work, 'purchase', yms), EXPORT_SALES_GAPS if export_gaps else ())
     sc = A.schedule_rows(fetch.load(work, 'schedule', yms), EXPORT_VISIT_GAPS if export_gaps else (),

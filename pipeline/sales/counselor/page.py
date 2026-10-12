@@ -40,7 +40,7 @@ def jp(d):
     return f'{d.month}月{d.day}日'
 
 
-def set_dates(html, sales_last, voc_last, visit_last, dur_last, notes):
+def set_dates(html, sales_last, voc_last, visit_last, dur_last, notes, shared=()):
     """本文中の日付つきの文を最新に合わせる。notes は欠損の説明（データ源ごとの締めの文）。"""
     subs = [
         (r'出典：[^。]*?（2026年3月20日〜[^）]*）',
@@ -51,6 +51,10 @@ def set_dates(html, sales_last, voc_last, visit_last, dur_last, notes):
         (r'(<dt>データ源ごとの締め</dt><dd>)[^<]*(</dd>)', r'\g<1>' + notes['close'] + r'\g<2>'),
         (r'(回答は)\d+月\d+日(分まで、欠損なく反映しています。)', r'\g<1>' + jp(voc_last) + r'\g<2>'),
     ]
+    if shared:
+        note = '共用アカウント（' + '・'.join(shared) + '）宛ての評価・コメントは除外しています。'
+        subs.append((r'(回答者が指名したカウンセラー単位で集計。)(?:共用アカウント[^<]*)?(</dd>)',
+                     r'\g<1>' + note + r'\g<2>'))
     for pat, rep in subs:
         html, n = re.subn(pat, rep, html, count=1)
         if n != 1:

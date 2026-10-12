@@ -6,7 +6,7 @@
 - 期間（--last など）は省略すると HTML の D.last_date / voc_last / visit_last を使う（＝公開版と同じ締め）。
 - --export-gaps: 公開版の元になったエクスポートの欠損（9/24 10:16以降の販売、9/24 の満足度調査、
   9/29・10/1・10/2 の来院）を再現する。Excel 時代の公開版（2026-10-10 版）と比べるときだけ使う。
-- --exclude-shared-voc: 共用アカウント宛ての評価を VOC から除いた場合を試す（公開版は除いていない）。
+- --include-shared-voc: 共用アカウント宛ての評価も VOC に含める（Excel 時代の公開版の集計。既定は除外）。
 - --table: 月ごとの主要指標の対照表（Markdown）。
 - 出力: 指標ごと・月ごとの「公開値 → 再計算値（差）」。一致した項目は数だけ数える。
   --strict を付けると、--months に挙げた月の主要指標（クリニック全体・カウンセラー別の販売）が
@@ -121,7 +121,7 @@ def main():
     ap.add_argument('work')
     ap.add_argument('--months', help='comma separated YYYY-MM / ALL / VOCWIN (default: every month on the page + ALL + VOCWIN)')
     ap.add_argument('--export-gaps', action='store_true')
-    ap.add_argument('--exclude-shared-voc', action='store_true')
+    ap.add_argument('--include-shared-voc', action='store_true', help='旧公開版（共用アカウント宛ての評価を含む）と比べるとき')
     ap.add_argument('--last')
     ap.add_argument('--voc-last')
     ap.add_argument('--visit-last')
@@ -134,7 +134,7 @@ def main():
     d = lambda s, k: dt.date.fromisoformat(s or pub[k])  # noqa: E731
     new = source.load(a.work, d(a.last, 'last_date'), voc_last=d(a.voc_last, 'voc_last'),
                       visit_last=d(a.visit_last, 'visit_last'), export_gaps=a.export_gaps,
-                      exclude_shared_voc=a.exclude_shared_voc, main=pub['main'])
+                      exclude_shared_voc=not a.include_shared_voc, main=pub['main'])
     months = a.months.split(',') if a.months else pub['months'] + ['ALL', 'VOCWIN']
     diffs = compare(pub, new, months)
     n_leaf = [0]

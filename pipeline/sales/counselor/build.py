@@ -1,7 +1,7 @@
 """公開中のカウンセラー販売実績ダッシュボードを、KOS OpenAPI のデータで作り直す。
 
     python3 -I pipeline/sales/counselor/build.py --html CURRENT.html --work WORK --out NEW.html
-        [--until YYYY-MM-DD] [--fetch | --fetch-all] [--allow-closed-drift]
+        [--until YYYY-MM-DD] [--fetch | --fetch-all] [--accept-closed-month-changes]
 
 - --html: 現在の公開ページ（Netlify の naa-counselor から netlify.download で保存したもの、または Artifact read の保存ファイル）。
 - --work: API の生データを置く作業フォルダ（リポジトリの外。fetch.py が WORK/raw/ に月ごとに保存）。
@@ -14,7 +14,7 @@
 止まる条件（何も書き出さない）:
 - 新しい D の最終日が、今のページより前になる
 - 締めた月（--until の前月より前の月）のクリニック全体の顧客数が1%超、売上が2%超、今のページとずれる
-  （API とエクスポートの差の確認が済むまでは --allow-closed-drift で通す。初回の切り替えは必ずこれが必要）
+  （Excel 版から API 版への初回切り替えだけ --accept-closed-month-changes で通す。日次では使わない）
 警告（止めない。--strict-new-staff を付けると止める）:
 - 表示していないカウンセラー（staff_roles.csv でカウンセラー、または csv に無い名前）が当月5人以上を担当している
   → 新しいカウンセラーなら aggregate.MAIN と本文「表示するカウンセラー」の文に足す（人の判断）
@@ -32,6 +32,9 @@ import page  # noqa: E402
 import source  # noqa: E402
 
 JST = A.JST
+
+
+EXCEL_FOOTER = 'エクスポート）'   # Excel 版のフッター「…（2026年3月20日〜10月10日エクスポート）」
 
 
 def prev_month(d):
@@ -83,8 +86,10 @@ def staff_check(work, until, main):
 
 def notes(sales_last, voc_last, visit_last):
     jp = page.jp
-    gap = ('2026年10月11日以降はKOS OpenAPIから直接集計しています。Excelエクスポートで欠けていた日'
-           '（9月24日10時15分以降の販売、9月24日の満足度調査、9月29日・10月1〜2日の来院）も含みます。')
+    gap = ('全期間をKOS OpenAPIから直接集計しており、欠損日はありません。以前のExcelエクスポート版で欠けていた'
+           '9月24日10時15分以降の販売、9月24日の満足度調査、9月29日・10月1〜2日の来院も含みます。'
+           'あとから処理された返金や担当の修正も反映するため、締めた月の数字が以前の版と少し異なります。'
+           '5月28日以前は予約データにカウンセラー名が入っていないことが多く、進行時間の担当は同じ日の会計担当で補っています。')
     if len({sales_last, voc_last, visit_last}) == 1:
         close = f'販売・売上、来院・進行時間、満足度調査とも{jp(sales_last)}まで（毎日、前日分までを反映）。'
     else:
@@ -102,7 +107,8 @@ def main():
     g = ap.add_mutually_exclusive_group()
     g.add_argument('--fetch', action='store_true')
     g.add_argument('--fetch-all', action='store_true')
-    ap.add_argument('--allow-closed-drift', action='store_true')
+    ap.add_argument('--accept-closed-month-changes', action='store_true',
+                    help='初回の切り替え専用: 締めた月の数字の変化を受け入れる（日次では使わない）')
     ap.add_argument('--strict-new-staff', action='store_true')
     a = ap.parse_args()
     os.umask(0o077)
@@ -123,10 +129,17 @@ def main():
     main_list = list(dict.fromkeys(list(A.MAIN) + [n for n in old.get('main', []) if n not in A.MAIN]))
     new = source.load(a.work, sales_last, voc_last=voc_last, visit_last=visit_last, main=main_list)
 
+    excel_page = EXCEL_FOOTER in html
+    if a.accept_closed_month_changes and not excel_page:
+        sys.exit('STOP: --accept-closed-month-changes is only for the first switch from the Excel-export page; '
+                 'this page is already built from the API')
+    if excel_page and not a.accept_closed_month_changes:
+        sys.exit('STOP: the live page is still the Excel-export version. For the first API build pass '
+                 '--accept-closed-month-changes (closed months change: gap fill, later refunds, shared-account VOC exclusion)')
     drift = closed_drift(old, new, until)
-    if drift and not a.allow_closed_drift:
+    if drift and not a.accept_closed_month_changes:
         sys.exit('STOP: closed months differ from the live page (check with verify.py; '
-                 'pass --allow-closed-drift if expected):\n  ' + '\n  '.join(drift))
+                 'pass --accept-closed-month-changes only for the first switch):\n  ' + '\n  '.join(drift))
     for m in drift:
         print('closed month changed:', m)
     extra, shared, total = staff_check(a.work, until, main_list)
@@ -141,7 +154,8 @@ def main():
               + ', '.join(f'{n} {c}人' for n, c in shared.items()) + f' / {total}人')
 
     out = page.set_d(html, new)
-    out = page.set_dates(out, sales_last, voc_last, visit_last, visit_last, notes(sales_last, voc_last, visit_last))
+    out = page.set_dates(out, sales_last, voc_last, visit_last, visit_last, notes(sales_last, voc_last, visit_last),
+                         shared=sorted(A.SHARED))
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(out)
     c = new['clinic']['ALL']
