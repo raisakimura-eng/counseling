@@ -50,6 +50,16 @@ NODE_PATH=$(npm root -g) node pipeline/sales/landing/check_render.js $WORK/new.h
    新しい月の日別タブは、1日分の実績ができるまで隠す。コードの変更は不要。
 5. 月まとめ：「9月まとめ」（`SUMMARY`、手書き）はそのまま残す。月が締まると（翌月1日の実行で）「◯月まとめ」タブを `SUMMARIES` に足す（下の「月まとめ」）。
 
+## 締めた日の修理（施術・購入データ）
+
+`python3 -I pipeline/sales/landing/build.py --html PAGE --work $WORK --out NEW --repair-day 10/10 [9/27 ...]`
+締めた日の、施術・購入・プリペイド由来の項目（売れた施術 `trTop`/`trCnt`/`trTot`、`kpi`、`swings`、`zeros`、
+高単価施術 `push`、`prep`、増額・減額・決済0円の説明文）を API から作り直す。0:00 の予想・スナップショット由来の値と金額
+（`Amorning`・`A`・`sameN`・差の内訳・`C`・`payC`）は変えない。
+
+- ガード：施術タスクが10件以上あるのに施術実施額の合計が0、または価格のあるタスクが3割未満の日は、締めない・日中も公開しない（KOS に価格が反映されるのを待つ）。
+- `verify.py --strict` は、売れた施術が10件以上あるのに金額0の日があれば FATAL。`daily.py` はその日を見つけると、作る前に自動で修理する。
+
 ## 日中の更新（12:25・14:25・16:25・18:25・20:25 JST）
 
 `python3 -I pipeline/sales/daily_sales.py --intraday`（landing だけ。counselor は対象外）→ `landing/daily.py --intraday`。

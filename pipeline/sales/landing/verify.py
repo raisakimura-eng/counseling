@@ -104,7 +104,10 @@ def main():
         if lbl in t_rows and t_rows[lbl][2] != aggregate.pay_day(raw, d):
             bad.append(f'{lbl} {t_rows[lbl][2]:,}→{aggregate.pay_day(raw, d):,}')
     print(f'== TARGET actual rows (決済ベース): {len(t_rows) - len(bad)}/{len(t_rows)} match' + (' — ' + ', '.join(bad) if bad else ''))
+    priced_bad = [x for x in (aggregate.record_price_problem(r) for r in c['DAYS_BASE'] + c['DAYS_CUR']) if x]
+    print('== 売れた施術の金額: ' + ('OK（金額0の日なし）' if not priced_bad else 'NG — ' + '; '.join(priced_bad)))
     if a.strict:
+        fatal += [f'施術の金額が0: {x}（build.py --repair-day で直す）' for x in priced_bad]
         if bad:
             fatal.append('TARGET actual rows differ: ' + ', '.join(bad))
         for key in ('DAYS_BASE', 'DAYS_CUR'):

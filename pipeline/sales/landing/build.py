@@ -197,6 +197,9 @@ def build(html, raw, today, targets, summary_text=None):
             continue
         if not raw.sched.get(e):
             raise SystemExit(f'STOP: no KOS reservation data for {e} in $WORK/raw; fetch it first')
+        bad = aggregate.treatment_price_problem(raw, e)
+        if bad:
+            raise SystemExit(f'STOP: 施術データの価格がまだ反映されていないようです（{bad}）。時間をおいて再実行してください')
         snap = T0.get('snap') if T0.get('date') == dlabel(e) else None
         m = T0['cur'] if T0.get('date') == dlabel(e) else morning.get(dlabel(e))
         recs[dlabel(e)] = aggregate.day_record(raw, e, snap=snap, morning=m, pay_based=True)
@@ -280,6 +283,43 @@ def restate(raw, rec, d):
             rec['payNote'] = aggregate.pay_note(pb, rec['prep'], rec['C'])
 
 
+REPAIR_FIELDS = ('trTop', 'trCnt', 'trTot', 'kpi', 'swings', 'zeros', 'push', 'prep', 'hasTr', 'hasPrep')
+REPAIR_FACTOR_TEXT = ('増額', '減額', '決済0円')  # their sentences name the treatments actually done
+
+
+def repair(html, raw, labels):
+    """Rebuild the 施術・購入・プリペイド-based items of closed days from the API (修理).
+    Kept as published: everything from the 0:00 forecast and the snapshot (Amorning, A, Aold, sameN, plan,
+    same, wf, …) and the amounts (C, payC). Replaced: REPAIR_FIELDS, and the sentences (not the amounts) of
+    the 増額 / 減額 / 決済0円 factors."""
+    consts = page.get_consts(html)
+    mon = consts['MON']
+    changed = {}
+    for lbl in labels:
+        for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
+            rec = next((r for r in consts[key] if r['date'] == lbl), None)
+            if rec is None:
+                continue
+            d = label_date(lbl, year)
+            bad = aggregate.treatment_price_problem(raw, d)
+            if bad:
+                raise SystemExit(f'STOP: the API data is still incomplete: {bad}')
+            new = aggregate.day_record(raw, d, morning=rec['Amorning'], pay_based='payC' in rec)
+            old = {f: rec.get(f) for f in REPAIR_FIELDS}
+            for f in REPAIR_FIELDS:
+                if f in new:
+                    rec[f] = new[f]
+            texts = {f['k']: f['text'] for f in new['factors']}
+            for f in rec['factors']:
+                if f['k'] in REPAIR_FACTOR_TEXT and f['k'] in texts:
+                    f['text'] = texts[f['k']]
+            changed[lbl] = (old, {f: rec.get(f) for f in REPAIR_FIELDS})
+            break
+        else:
+            raise SystemExit(f'STOP: {lbl} is not on the page')
+    return page.set_consts(html, {'DAYS_BASE': consts['DAYS_BASE'], 'DAYS_CUR': consts['DAYS_CUR']}), changed
+
+
 def cal_of(raw, d, coef):
     """補正ロジックの予想: 来院予定 × 前月の来院率 × (予約金額 × 前月の上乗せ率, 未入力は前月の未入力の実績)."""
     x = aggregate.Day(raw, d)
@@ -352,6 +392,9 @@ def intraday(html, raw, today, now, as_of=None):
     past = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') < cut]
     base = sum(rate[vtype(r)] * (resv(r) or coef['fill'][vtype(r)]) for r in future)
     upb = sum(rate[vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else coef['fill'][vtype(r)]) for r in future)
+    bad = aggregate.treatment_price_problem(raw, today)
+    if bad:
+        raise SystemExit(f'STOP: 施術データの価格がまだ反映されていないようです（{bad}）。この回は公開しません')
     tasks = aggregate.proc_tasks(raw, today)
     tr = collections.defaultdict(lambda: [set(), 0])
     for vid, ts in tasks.items():
@@ -404,11 +447,19 @@ def main():
     ap.add_argument('--summary', help='summary_todo.json whose "text" has been written (makes the 月まとめ tab)')
     ap.add_argument('--summary-todo', help='where to write the numbers when a 月まとめ is needed (default $WORK/summary_todo.json)')
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only the results of today (see intraday())')
+    ap.add_argument('--repair-day', nargs='+', metavar='M/D', help='修理: rebuild the 施術・購入-based items of these closed days from the API')
     ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday: replay this time of a finished day (data fetched with --until)')
     a = ap.parse_args()
     os.umask(0o077)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
     html = open(a.html, encoding='utf-8').read()
+    if a.repair_day:
+        out, changed = repair(html, Raw(a.work), a.repair_day)
+        open(a.out, 'w', encoding='utf-8').write(out)
+        for lbl, (old, new) in changed.items():
+            print(f"repaired {lbl}: 売れた施術 {old['trTot']} → {new['trTot']}; 施術数/人 {old['kpi'].get('tpp')} → {new['kpi'].get('tpp')}, "
+                  f"2施術以上 {old['kpi'].get('multi')} → {new['kpi'].get('multi')}")
+        return
     if a.intraday:
         now = dt.datetime.now(JST).strftime('%H:%M')
         as_of = dt.datetime.combine(today, dt.time(*map(int, a.as_of.split(':'))), JST) if a.as_of else None

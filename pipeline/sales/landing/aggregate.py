@@ -719,3 +719,27 @@ def summary_facts(S):
         '当日キャンセル率': S['same'], 'キャンセル率（全予約）': S['canc'],
         '翌月': S['next'],
     }
+
+
+# ---------------------------------------------------------------- 施術データの価格チェック ----
+
+def treatment_price_problem(raw, d, min_tasks=10, min_priced=0.3):
+    """None, or why the 施術 (procedure task) data of D looks incomplete: tasks without 施術実施額.
+    Normally about 70% of the tasks of a day carry a ticket price (2026-09/10); a day whose tasks are all
+    (or nearly all) at 0 円 has prices not reflected yet, and must not be closed with them."""
+    ts = [t for v in proc_tasks(raw, d).values() for t in v]
+    if len(ts) < min_tasks:
+        return None
+    priced = sum(1 for t in ts if money(t.get('ticketPriceV2')) > 0)
+    amt = sum(money(t.get('ticketPriceV2')) for t in ts)
+    if amt == 0 or priced / len(ts) < min_priced:
+        return f'{d}: 施術{len(ts)}件のうち施術実施額があるのは{priced}件（合計{round(amt):,}円）'
+    return None
+
+
+def record_price_problem(rec):
+    """The same check on a published day record (trTot = 施術 rows, amount, people)."""
+    t = rec.get('trTot') or {}
+    if t.get('n', 0) >= 10 and not t.get('amt'):
+        return f"{rec['date']}: 売れた施術 {t['n']}件・{t.get('pts')}人なのに金額0円"
+    return None

@@ -24,8 +24,9 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))  # pipeline/ (netlify)
+sys.path.insert(0, HERE)  # first: pipeline/ has modules with the same names (aggregate, build, verify)
+import aggregate  # noqa: E402
 import config  # noqa: E402
 import page  # noqa: E402
 
@@ -127,6 +128,14 @@ def main():
     stale = os.path.join(WORK, 'daily_analysis.json')
     if os.path.exists(stale):
         os.remove(stale)  # only a file made by this run may be posted
+    # published days whose 売れた施術 has no amounts (the 施術 prices were not in KOS yet when they were made):
+    # rebuild those items from the API first (only the 施術・購入-based items; the forecast stays)
+    sick = [r['date'] for r in consts.get('DAYS_BASE', []) + consts.get('DAYS_CUR', []) if aggregate.record_price_problem(r)]
+    if sick:
+        repaired = os.path.join(WORK, 'repaired.html')
+        if py('build.py', '--html', cur, '--work', WORK, '--out', repaired, '--repair-day', *sick):
+            sys.exit(f'STOP: could not repair the 施術 amounts of {sick}')
+        shutil.copy(repaired, cur)
     rc = py('build.py', '--html', cur, '--work', WORK, '--out', new, '--today', today,
             *(['--summary', a.summary] if a.summary else ['--summary-todo', todo]))
     if rc == 4:
