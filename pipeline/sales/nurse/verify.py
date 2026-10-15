@@ -17,6 +17,7 @@
 import argparse
 import collections
 import datetime as dt
+import decimal
 import json
 import os
 import re
@@ -129,7 +130,8 @@ def raw_diff(pub, new):
 def expect(views):
     """check_render.js 用: 表示ごとのサマリーと表の各行を、画面と同じ書式の文字列で。"""
     pct = lambda v: '–' if v is None else f'{round(v * 100 + 1e-9):.0f}%'  # noqa: E731
-    fmt1 = lambda v: '–' if v is None else f'{v:.2f}'  # noqa: E731
+    # the page uses JS toFixed(2): half-up on the exact binary value (4.625 -> '4.63'; Python's :.2f gives '4.62')
+    fmt1 = lambda v: '–' if v is None else str(decimal.Decimal(v).quantize(decimal.Decimal('0.01'), decimal.ROUND_HALF_UP))  # noqa: E731
     lab = {'good': '良好', 'warn': '注意', 'crit': '要確認', 'na': 'VOCなし'}
     out = {}
     for (day, mode), (t, rows) in views.items():

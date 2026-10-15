@@ -127,6 +127,19 @@ def seed(consts):
     return mon
 
 
+def rate_note(mon):
+    """How the forecast of the current month's days was made (来院率 up to 10/14, the 予約金額 itself from 10/15)."""
+    first = dt.date(mon['y'], mon['c'], 1)
+    last = (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+    nr = config.NO_RATE_FROM
+    if last < nr:
+        return '来院率 初診90%・再診95%'
+    if first >= nr:
+        return '来院率は掛けず予約金額そのまま'
+    prev = nr - dt.timedelta(days=1)
+    return f'{prev.month}/{prev.day}までは来院率 初診90%・再診95%、{nr.month}/{nr.day}からは来院率を掛けず予約金額そのまま'
+
+
 def gen_texts(consts, base_days_n, today):
     mon = consts['MON']
     b, c = mon['b'], mon['c']
@@ -142,7 +155,7 @@ def gen_texts(consts, base_days_n, today):
     g = consts['TARGET']
     ca = consts['TODAY']['coefAll']
     return {
-        'sub': f'（差額＝実決済 − 予約時点の予想。来院率 初診90%・再診95%。メニュー未入力は{b}月の未入力の方の実績で補完）',
+        'sub': f'（差額＝実決済 − 予約時点の予想。{rate_note(mon)}。メニュー未入力は{b}月の未入力の方の実績で補完）',
         'goalFoot': f'予約データのない日は、{b}月の同じ曜日の平均で見込んでいます。日割り目標は、{g["days"]}日すべて営業する前提で等分しています。',
         'cmpFoot': ('、'.join(parts) + '。') if parts else f'{c}月はまだ実績がありません。',
         'tbaseSub': f'{mon["calib"]}の実績から算出',
@@ -181,7 +194,7 @@ def build(html, raw, today, targets, summary_text=None):
         mon = seed(consts)
         html = page.migrate(html, mon)
         consts['MON'] = mon
-    html = page.migrate_live(page.migrate_summaries(html))
+    html = page.migrate_norate(page.migrate_live(page.migrate_summaries(html)))
     consts.setdefault('SUMMARIES', [])
     mon = consts['MON']
     T0 = consts['TODAY']
@@ -342,7 +355,7 @@ def intraday(html, raw, today, now, as_of=None):
     AS_OF (aware datetime): replay an earlier hour of a finished day — the data must have been fetched up to
     that time (fetch.py --until); a reservation counts as 来院 if it was received by then."""
     from data import JST, excluded, jst, money, paid, resv, start, vtype
-    html = page.migrate_live(html)
+    html = page.migrate_norate(page.migrate_live(html))
     consts = page.get_consts(html)
     T = consts['TODAY']
     if T['date'] != dlabel(today):
@@ -387,7 +400,7 @@ def intraday(html, raw, today, now, as_of=None):
     ex_paid = sum(paid(r) for r in allrows if excluded(r) and r['reservationStatus'] == 'COMPLETED')
     vbase = sum(paid(r) for r in visited)
     pay = aggregate.pay_day(raw, today)
-    coef, rate = T['coef'], config.RATE
+    coef, rate = T['coef'], config.rate(today)
     future = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') >= cut] + inprog
     past = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') < cut]
     base = sum(rate[vtype(r)] * (resv(r) or coef['fill'][vtype(r)]) for r in future)

@@ -338,3 +338,37 @@ def migrate_live(html):
             raise SystemExit(f'STOP: page code changed; expected {n}× {old[:60]!r}, found {c}')
         js = js.replace(old, new)
     return html[:a] + js + html[b:]
+
+
+JS_EDITS_4 = [
+    # from 10/15 the forecast is the 予約金額 itself (no 来院率); the day's waterfall step is then 「当日キャンセル」
+    ("      '来院率の差': `当日キャンセル${d.sameN}件で、来院が想定を下回りました。`,\n",
+     "      '来院率の差': `当日キャンセル${d.sameN}件で、来院が想定を下回りました。`,\n"
+     "      '当日キャンセル': `当日キャンセル${d.sameN}件の分、予想を下回りました。`,\n", 1),
+    ("の予約金額に来院率（初診90%・再診95%）を掛けた金額です。", "の予約金額の合計です（来院率は掛けていません）。", 1),
+    ("残りの予約に来院率を掛けた${yen(L.fut.base)}円を足した額", "残りの予約の予約金額（未入力は補完）${yen(L.fut.base)}円を足した額", 1),
+    ("（予約金額${yen(M.resv)}円）× 来院率 = ${yen(M.Pnow)}円", "（予約金額${yen(M.resv)}円）", 1),
+]
+HTML_EDITS_4 = [
+    ("の予約金額に来院率を掛けた予想です。", "の予約金額で見込んだ予想です（10/14までは来院率 初診90%・再診95%を掛けています）。", 1),
+]
+
+
+def migrate_norate(html):
+    """Stage 4 (idempotent): wording for the forecast without 来院率 (from 2026-10-15)."""
+    if "'当日キャンセル': `当日キャンセル" in html:
+        return html
+    a, b = script_bounds(html)
+    js = html[a:b]
+    for old, new, n in JS_EDITS_4:
+        c = js.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page code changed; expected {n}× {old[:60]!r}, found {c}')
+        js = js.replace(old, new)
+    head, tail = html[:a], html[b:]
+    for old, new, n in HTML_EDITS_4:
+        c = head.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page changed; expected {n}× {old[:60]!r}, found {c}')
+        head = head.replace(old, new)
+    return head + js + tail

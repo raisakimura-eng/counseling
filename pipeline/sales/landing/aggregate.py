@@ -7,7 +7,7 @@ import collections
 import datetime as dt
 
 import config
-from config import RATE, TYPES
+from config import TYPES, rate
 from data import (dlabel, excluded, menu_label, money, paid, reserved_at, resv, start, vtype, wd)
 
 
@@ -29,9 +29,11 @@ def _avg(xs):
     return sum(xs) / len(xs) if xs else 0
 
 
-def forecast(rows, avg):
-    """予約金額 × 来院率 (初診90%・再診95%); メニュー未入力 (予約金額0) is filled with AVG."""
-    return sum(RATE[vtype(r)] * (resv(r) or avg) for r in rows)
+def forecast(rows, avg, d):
+    """予約金額 × 来院率 of visit day D (config.rate: 初診90%・再診95% up to 10/14, 100% from 10/15);
+    メニュー未入力 (予約金額0) is filled with AVG."""
+    R = rate(d)
+    return sum(R[vtype(r)] * (resv(r) or avg) for r in rows)
 
 
 def proc_tasks(raw, d):
@@ -149,11 +151,12 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     vis, plan, full = x.visited, x.plan, x.full
     by_t = lambda rows, t: [r for r in rows if vtype(r) == t]  # noqa: E731
     avg = _avg(resv(r) for r in plan)
-    A = forecast(plan, avg)
-    low = sum(RATE[vtype(r)] * resv(r) for r in plan)
-    Aold = forecast(full, _avg(resv(r) for r in full))
+    R = rate(d)
+    A = forecast(plan, avg, d)
+    low = sum(R[vtype(r)] * resv(r) for r in plan)
+    Aold = forecast(full, _avg(resv(r) for r in full), d)
     morning_rows = [r for r in plan if reserved_at(r) < x.day0]
-    Am = forecast(morning_rows, avg)
+    Am = forecast(morning_rows, avg, d)
     C = sum(paid(r) for r in vis)
     resvV = sum(resv(r) for r in vis)
     nomenu = [r for r in vis if resv(r) == 0]
@@ -169,7 +172,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     for t in TYPES:
         p, v = by_t(plan, t), by_t(vis, t)
         rs_, pd_ = sum(resv(r) for r in v), sum(paid(r) for r in v)
-        typ.append({'t': t, 'n': len(p), 'vis': len(v), 'vr': len(v) / len(p) if p else 0, 'assume': RATE[t],
+        typ.append({'t': t, 'n': len(p), 'vis': len(v), 'vr': len(v) / len(p) if p else 0, 'assume': R[t],
                     'resv': rs_, 'paid': pd_, 'ratio': pd_ / rs_ if rs_ else None})
 
     def swing(r):
@@ -243,7 +246,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'bookT': {t: len(by_t(plan, t)) for t in TYPES}, 'visN': len(vis), 'cancN': len(x.cancelled),
         'rebook': len({r['visitorId'] for r in x.rebook}), 'A': round(A), 'low': round(low), 'cal': None, 'C': C, 'resvV': resvV,
         'missN': sum(1 for r in plan if resv(r) == 0), 'avg': round(avg),
-        'wf': [['着地予想', round(A)], ['来院率の差', round(rate_gap)], ['未入力の補完', round(fill)],
+        'wf': [['着地予想', round(A)], ['来院率の差' if d < config.NO_RATE_FROM else '当日キャンセル', round(rate_gap)], ['未入力の補完', round(fill)],
                ['決済0円', -zsum], ['減額', dnS], ['増額', upS], ['着地結果', C]],
         'wfnotes': ['当日基準の来院予定', f'当日キャンセル{len(x.same)}件', f'未入力{len(nomenu)}件（平均単価{yen(avg)}円で補完）',
                     f'予約金額ありで0円の{len(zeros)}件', f'予約金額より少ない{len(dns)}件', f'予約金額より多い{len(ups)}件', '決済総額'],
@@ -320,7 +323,10 @@ def factors(rec, x, vis, nomenu, zeros, ups, dns, sameT, vr):
         f"メニュー未入力の来院{len(nomenu)}件を平均予約単価{yen(rec['avg'])}円で見込みましたが、実際の決済は計{yen(sum(paid(r) for r in nomenu))}円でした（うち{nz}件は決済0円）。"
         if nomenu else 'メニュー未入力の来院はありませんでした。')})
     g = rec['wf'][1][1]
-    out.append({'k': '来院率', 'v': g, 'text': f"当日キャンセル{rec['sameN']}件（初診{sameT['初診']}件、再診{sameT['再診']}件）。来院率は初診{pct1(vr['初診'])}（想定90%）・再診{pct1(vr['再診'])}（想定95%）で、全体では予想を{'押し上げ' if g >= 0 else '押し下げ'}ました。"})
+    if x.d < config.NO_RATE_FROM:
+        out.append({'k': '来院率', 'v': g, 'text': f"当日キャンセル{rec['sameN']}件（初診{sameT['初診']}件、再診{sameT['再診']}件）。来院率は初診{pct1(vr['初診'])}（想定90%）・再診{pct1(vr['再診'])}（想定95%）で、全体では予想を{'押し上げ' if g >= 0 else '押し下げ'}ました。"})
+    else:  # from 10/15 the forecast has no 来院率: this step is exactly the reservations cancelled on the day
+        out.append({'k': '当日キャンセル', 'v': g, 'text': f"当日キャンセル{rec['sameN']}件（初診{sameT['初診']}件、再診{sameT['再診']}件）。予想は予約金額をそのまま見込んでいるため、キャンセルの分だけ予想を押し下げました。" if rec['sameN'] else '当日キャンセルはありませんでした。'})
     if zeros:
         top = max(zeros, key=resv)
         with_tr = sum(1 for r in zeros if x.tasks.get(r['visitorId']))
@@ -410,7 +416,7 @@ def base_stats(raw, base_days, base_records):
             plan = [r for x in X for r in x.plan if vtype(r) == t and keep(x, r)]
             pr = [r for r in vis if resv(r) > 0]
             nm = [r for r in vis if resv(r) == 0]
-            c['vrate'][t] = round(len(vis) / len(plan), 4) if plan else RATE[t]
+            c['vrate'][t] = round(len(vis) / len(plan), 4) if plan else config.RATE[t]
             c['upsell'][t] = round(sum(map(paid, pr)) / sum(map(resv, pr)), 3) if pr else 1
             c['fill'][t] = round(sum(map(paid, nm)) / len(nm)) if nm else 0
         return c
@@ -503,13 +509,14 @@ def today_record(raw, d, base, now_label='0:00時点'):
     exN = sum(1 for r in rows if excluded(r) and r['reservationStatus'] in config.ACTIVE)
     by_t = lambda rs, t: [r for r in rs if vtype(r) == t]  # noqa: E731
     coef = base['coef']
+    R = rate(d)
     byType, cur, cal = {}, 0, 0
     for t in TYPES:
         a = by_t(active, t)
         amt = sum(resv(r) for r in a)
         none = sum(1 for r in a if resv(r) == 0)
-        c_raw = RATE[t] * (amt + none * coef['fill'][t])
-        c_cal = RATE[t] * (amt * coef['upsell'][t] + none * coef['fill'][t])
+        c_raw = R[t] * (amt + none * coef['fill'][t])
+        c_cal = R[t] * (amt * coef['upsell'][t] + none * coef['fill'][t])
         byType[t] = {'n': len(a), 'amt': amt, 'cal': round(c_cal)}
         cur += c_raw
         cal += c_cal
@@ -550,7 +557,7 @@ def today_record(raw, d, base, now_label='0:00時点'):
         'est': sum(resv(r) for r in priced), 'pricedN': len(priced), 'partN': 0, 'noneN': none,
         'avg': round(_avg(resv(r) for r in active)), 'cur': round(cur), 'cal': round(cal),
         # 総予約数基準: the same forecast on every reservation of the day, cancelled ones included
-        'full': round(forecast(active + cancelled, _avg(resv(r) for r in active + cancelled))), 'fullN': len(active) + len(cancelled),
+        'full': round(forecast(active + cancelled, _avg(resv(r) for r in active + cancelled), d)), 'fullN': len(active) + len(cancelled),
         'exact': True, 'estN': 0, 'band': base['band'], 'fullBias': base.get('fullBias', 0), 'vrate': coef['vrate'], 'byType': byType,
         'hours': hrs, 'topCnt': [{'name': k, 'n': n} for k, n in cnt.most_common(8)],
         'ch': grp(lambda r: r.get('reservationFunnelName') or '未設定'),
@@ -577,13 +584,14 @@ def resv_month(raw, d, act, rest_days, base_days, wavg):
     from data import JST
     t0 = dt.datetime.combine(cut, dt.time(), JST)
     rows = [r for e in rest_days for r in raw.sched.get(e, []) if not excluded(r) and reserved_at(r) < t0]
-    P = sum(RATE[vtype(r)] * resv(r) for r in rows)
+    R = rate(d)  # the base month is weighted the same way, so the correction ratio stays consistent
+    P = sum(R[vtype(r)] * resv(r) for r in rows)
     k = cut.day  # same position in the base month
     b_rest = [e for e in base_days if e.day >= k]
     if b_rest:
         b0 = dt.datetime.combine(b_rest[0], dt.time(), JST)
         b_rows = [r for e in b_rest for r in raw.sched.get(e, []) if not excluded(r) and reserved_at(r) < b0]
-        bP = sum(RATE[vtype(r)] * resv(r) for r in b_rows)
+        bP = sum(R[vtype(r)] * resv(r) for r in b_rows)
         bC = sum(visit_total_all(raw, e) for e in b_rest)
         ratio = bC / bP if bP else 1
     else:

@@ -14,8 +14,16 @@ EXCLUDE_CATEGORIES = {'NaA+HPMS': 'staff', 'インフルエンサー': 'influenc
 # visitor is excluded on the published page but has no category in KOS). None = categories only.
 EXCLUDE_VISITOR_MEMO = re.compile(r'ブログにのせる')
 
-# 来院率 assumed by the 着地予想 (current logic on the page: 初診90%・再診95%)
+# 来院率 assumed by the 着地予想. Up to 2026-10-14 the forecast was 予約金額 × 来院率 (初診90%・再診95%);
+# from 2026-10-15 (owner's decision) it is the 予約金額 itself (メニュー未入力 still filled), i.e. 来院率 100%.
+# Days before NO_RATE_FROM keep the forecast that was published for them.
 RATE = {'初診': 0.9, '再診': 0.95}
+NO_RATE_FROM = __import__('datetime').date(2026, 10, 15)
+
+
+def rate(d):
+    """来院率 used by the forecast for visit day D."""
+    return RATE if d < NO_RATE_FROM else {'初診': 1.0, '再診': 1.0}
 TYPES = ('初診', '再診')
 
 # Statuses

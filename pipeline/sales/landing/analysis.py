@@ -88,7 +88,7 @@ def analyse(raw, consts, day, work, targets, n_past=6):
     # 1. 予想と実績の差の理由 (寄与額)
     contrib = {
         '当日予約（当日に入った予約の決済）': rec['sd']['paid'],
-        '当日キャンセル（予想に入っていた分）': -round(sum(config.RATE[s['who']] * (s['amt'] or avg) for s in rec['same'])),
+        '当日キャンセル（予想に入っていた分）': -round(sum(config.rate(day)[s['who']] * (s['amt'] or avg) for s in rec['same'])),
         '増額（予約金額より多い決済）': rec['upS'],
         '減額（予約金額より少ない決済）': rec['dnS'],
         '決済0円（予約金額あり）': -rec['zsum'],
