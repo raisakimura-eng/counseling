@@ -64,3 +64,34 @@ python3 -I pipeline/sales/counselor/verify.py $W/current.html $W --export-gaps -
 
 9/24 10:16 以降の販売、9/24 の満足度調査（15件。ページには「欠損なく反映」とあった）、9/29・10/1・10/2 の来院。
 API 版ではすべて埋まる（`build.py` が本文の「データの欠損」「データ源ごとの締め」の文も書き換える）。
+
+## 週次の課題ページ（naa-counselor-review、パスワード保護）
+
+カウンセラーごとの「良かった点・課題・来週やること」を、前週（月〜日）の実績から毎週書き直すページ。
+オーナーの決定（2026-10-16）: 実績ダッシュボード（公開）には載せず、**パスワード保護の別サイト**にする。更新は週1回。
+
+```
+python3 -I pipeline/sales/counselor/weekly_review.py prepare      # 数字 → $SALES_WORK/review/numbers.json と issues.json（ひな形）
+#  -> issues.json を書く（下の指針）
+python3 -I pipeline/sales/counselor/weekly_review.py finish       # ページ作成 → 表示確認 → 公開（パスワード保護を確認してから）
+```
+
+| ファイル | 役割 |
+|---|---|
+| `weekly.py` | 前週と直前4週・クリニック全体の数字（販売実績ダッシュボードと同じ定義）。対象週の満足度調査の自由記述も入れる（ページには載せない材料） |
+| `review_page.py` | numbers.json と issues.json から1ファイルの HTML。全員分の課題が無い、週が合わない場合は止まる |
+| `weekly_review.py` | prepare / finish。公開は `netlify.deploy(..., require_password=True)`（保護が外れていたら止まる） |
+
+### issues.json の書き方（Claude が毎週書く）
+
+```json
+{"week": [月曜, 日曜], "updated": "YYYY-MM-DD 作成", "overview": "全体の2〜3文",
+ "team": ["チーム全体の課題（2〜3個）"],
+ "people": {"名前": {"headline": "一言", "good": ["…"], "issues": ["…"], "actions": ["…"]}}}
+```
+
+- 数字は numbers.json の値だけを使う（週と直前4週の比較、クリニック全体との比較）。推測しない。
+- 1人につき good 1〜3、issues 1〜4、actions 1〜3。actions は来週すぐできる具体的な行動にする。
+- 自由記述は要旨だけ書く（例:「少し早口という声」）。患者が特定できる内容・本文の長い引用・カルテ番号は書かない。
+- 担当客数が10人未満の週（few）は、断定せず「件数が少ないので参考」と添える。
+- 人を責める書き方にしない。課題は行動で書く（「〜が低い」だけで終わらせず、何をするかを actions に）。
