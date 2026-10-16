@@ -19,6 +19,7 @@ Work folders under $SALES_WORK (default /tmp/sales-work) hold patient data and s
 """
 import argparse
 import datetime as dt
+import filecmp
 import os
 import subprocess
 import sys
@@ -97,6 +98,11 @@ def landing(deploy, summary=None, today=None):
         sys.exit('STOP landing: 今月の売上目標が読めません（targets.json の default も無い）')
     if code:
         sys.exit('STOP landing: build / verify / render check failed; nothing deployed')
+    if filecmp.cmp(os.path.join(w, 'new.html'), os.path.join(w, 'current.html'), shallow=False):
+        # daily.py found the forecast already published (e.g. the 1:40 retry after a good 0:30 run):
+        # do not deploy the same page again (every Netlify deploy uses account credits)
+        print('NOTHING TO DO landing: the live page is already up to date; not deployed')
+        return
     analysis = os.path.join(w, 'daily_analysis.json')
     if os.path.exists(analysis):
         print(f'ANALYSIS READY: {analysis}（「この日の分析」の Slack 投稿用。指針: pipeline/sales/landing/README.md「Slack 投稿文の指針」）')
