@@ -65,22 +65,25 @@ python3 -I pipeline/sales/counselor/verify.py $W/current.html $W --export-gaps -
 9/24 10:16 以降の販売、9/24 の満足度調査（15件。ページには「欠損なく反映」とあった）、9/29・10/1・10/2 の来院。
 API 版ではすべて埋まる（`build.py` が本文の「データの欠損」「データ源ごとの締め」の文も書き換える）。
 
-## 週次の課題ページ（naa-counselor-review、パスワード保護）
+## 週次の課題（ダッシュボード内の「週次の課題」セクション、パスワード保護）
 
-カウンセラーごとの「良かった点・課題・来週やること」を、前週（月〜日）の実績から毎週書き直すページ。
-オーナーの決定（2026-10-16）: 実績ダッシュボード（公開）には載せず、**パスワード保護の別サイト**にする。更新は週1回。
+カウンセラーごとの「良かった点・課題・来週やること」を、前週（月〜日）の実績から毎週書き直すセクション。
+2026-10-16 は別サイト（naa-counselor-review）で始めたが、2026-10-24 にオーナーの決定で**このダッシュボードに合併**し、
+naa-counselor を**パスワード保護**にした（個人名と課題が載るため。毎日の公開も保護を確認してから行う）。
 
 ```
 python3 -I pipeline/sales/counselor/weekly_review.py prepare      # 数字 → $SALES_WORK/review/numbers.json と issues.json（ひな形）
 #  -> issues.json を書く（下の指針）
-python3 -I pipeline/sales/counselor/weekly_review.py finish       # ページ作成 → 表示確認 → 公開（パスワード保護を確認してから）
+python3 -I pipeline/sales/counselor/weekly_review.py finish       # 公開中のページに差し込み → 表示確認 → 公開（パスワード保護を確認してから）
 ```
 
 | ファイル | 役割 |
 |---|---|
-| `weekly.py` | 前週と直前4週・クリニック全体の数字（販売実績ダッシュボードと同じ定義）。対象週の満足度調査の自由記述も入れる（ページには載せない材料） |
-| `review_page.py` | numbers.json と issues.json から1ファイルの HTML。全員分の課題が無い、週が合わない場合は止まる |
-| `weekly_review.py` | prepare / finish。公開は `netlify.deploy(..., require_password=True)`（保護が外れていたら止まる） |
+| `weekly.py` | 前週と直前4週・クリニック全体の数字（このダッシュボードと同じ定義）。対象週の満足度調査の自由記述も入れる（ページには載せない材料） |
+| `review_page.py` | セクションの HTML を作り、ページの `<!--WEEKLY:BEGIN-->`〜`<!--WEEKLY:END-->` を差し替える（初回は「カウンセラー別」の表の後に入れる）。全員分の課題が無い、週が合わない場合は止まる |
+| `weekly_review.py` | prepare / finish。finish は公開中のページを取り、セクションだけ差し替えて `check_render.js` → `netlify.deploy`（保護が外れていたら止まる） |
+
+毎日の `build.py` は `const D` の行と日付の文だけを書き換えるので、セクションはそのまま残る（週の途中で消えない）。
 
 ### issues.json の書き方（Claude が毎週書く）
 

@@ -1,4 +1,4 @@
-"""毎週月曜の「カウンセラー別の課題」ページ（naa-counselor-review、パスワード保護）の更新。
+"""毎週月曜、カウンセラー販売実績ダッシュボード（naa-counselor、パスワード保護）の「週次の課題」セクションを更新する。
 
     python3 -I pipeline/sales/counselor/weekly_review.py prepare [--week-end YYYY-MM-DD]
     #  -> $WORK/issues.json を書く（README「週次の課題ページ」の書き方）
@@ -6,7 +6,8 @@
 
 prepare: 前週（月〜日）と直前4週の数字を KOS から作り（weekly.py --fetch）、$WORK/numbers.json と
          書き込み用の $WORK/issues.json（ひな形）を置く。
-finish:  issues.json の文章と数字からページを作り、Chromium で表示を確かめて、パスワード保護のサイトに公開する。
+finish:  公開中の naa-counselor を取り、issues.json の文章と数字で「週次の課題」セクションを差し替え、
+         Chromium で表示を確かめて、パスワード保護を確認してから公開する（ダッシュボードの数字は変えない）。
 $WORK（既定 /tmp/sales-work/review）は患者のコメント本文を含むので、リポジトリの外に置く。
 """
 import argparse
@@ -19,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))  # pipeline/ (netlify)
 import netlify  # noqa: E402
 
-SITE = 'naa-counselor-review'
+SITE = 'naa-counselor'  # 2026-10-24: 別サイト naa-counselor-review から合併（オーナーの決定）
 BASE = os.environ.get('SALES_WORK', '/tmp/sales-work')
 WORK = os.path.join(BASE, 'review')
 RAW = os.path.join(BASE, 'counselor')  # 販売実績ダッシュボードと同じ生データの置き場（raw/）
@@ -47,23 +48,20 @@ def prepare(a):
 
 
 def finish(a):
-    page = os.path.join(WORK, 'page.html')
+    cur, page = os.path.join(WORK, 'current.html'), os.path.join(WORK, 'page.html')
+    netlify.download(SITE, cur)
     if run(sys.executable, '-I', os.path.join(HERE, 'review_page.py'), '--numbers', os.path.join(WORK, 'numbers.json'),
-           '--issues', os.path.join(WORK, 'issues.json'), '--out', page):
+           '--issues', os.path.join(WORK, 'issues.json'), '--into', cur, '--out', page):
         sys.exit('STOP: the page could not be made; nothing deployed')
     npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
-    check = ("const {chromium}=require('playwright');(async()=>{const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'})"
-             ".catch(()=>chromium.launch());const p=await b.newPage();const e=[];p.on('pageerror',x=>e.push(x.message));"
-             f"await p.goto('file://{page}');const t=await p.innerText('body');await b.close();"
-             "if(e.length||/NaN|undefined/.test(t)){console.log('NG',e);process.exit(1)}console.log('OK render')})()")
-    if subprocess.run(['node', '-e', check], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
+    if subprocess.run(['node', os.path.join(HERE, 'check_render.js'), page], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
         sys.exit('STOP: render check failed; nothing deployed')
     if a.no_deploy:
         print('built and checked (not deployed):', page)
         return
     week = json.load(open(os.path.join(WORK, 'numbers.json')))['week']
-    netlify.deploy(SITE, page, f'{week[0]}〜{week[1]} の課題')  # require_password: the page names staff and their issues
-    print(f'DONE: https://{SITE}.netlify.app（{week[0]}〜{week[1]}）')
+    netlify.deploy(SITE, page, f'週次の課題 {week[0]}〜{week[1]}')  # require_password: the section names staff and their issues
+    print(f'DONE: https://{SITE}.netlify.app#weekly（{week[0]}〜{week[1]}）')
 
 
 def main():

@@ -14,7 +14,8 @@ Exit code 4 from landing (1st of a month): the closed month's 「◯月まとめ
 "text" of $SALES_WORK/landing/summary_todo.json (README in landing/), then run
     python3 -I pipeline/sales/daily_sales.py --only landing --summary $SALES_WORK/landing/summary_todo.json
 
-All three sites are public by the owner's decision (2026-10-12), so they deploy with require_password=False.
+naaclinic and naa-nurse are public by the owner's decision (2026-10-12) and deploy with require_password=False.
+naa-counselor is password protected since 2026-10-24 (it carries the weekly issues per counselor).
 Work folders under $SALES_WORK (default /tmp/sales-work) hold patient data and stay outside the repo.
 """
 import argparse
@@ -55,7 +56,7 @@ def counselor(deploy):
     if run('node', os.path.join(d, 'check_render.js'), new, env=dict(os.environ, NODE_PATH=npm_root)):
         sys.exit('STOP counselor: render check failed; nothing deployed')
     if deploy:
-        netlify.deploy('naa-counselor', new, f'{until}分まで反映（自動更新）', require_password=False)
+        netlify.deploy('naa-counselor', new, f'{until}分まで反映（自動更新）')  # password: carries the weekly issues per counselor
         print(f'DONE counselor: {until}分まで反映 https://naa-counselor.netlify.app')
     else:
         print('built and checked (not deployed):', new)
