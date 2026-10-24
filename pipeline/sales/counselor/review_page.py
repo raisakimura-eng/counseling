@@ -5,6 +5,7 @@
 
 - NUMBERS.json: weekly.py の出力（数字。患者コメントの本文も入っているが、ページには載せない）。
 - ISSUES.json: Claude が週ごとに書く課題の文章（形式は README「週次の課題」）。
+- セクションはタブで切り替える（チーム全体／カウンセラーごと）。オーナーの決定 2026-10-24。
 - CURRENT.html: 公開中の naa-counselor のページ。セクションは <!--WEEKLY:BEGIN--> 〜 <!--WEEKLY:END--> の間だけで、
   初回は「カウンセラー別」の表（#bycounselor）のすぐ後に入れる。毎日の build.py は D の行と日付の文だけを
   書き換えるので、このセクションはそのまま残る。
@@ -88,7 +89,8 @@ def table(people, weeks):
         mins = lambda d: f'{d["med"]:.0f}分' if d else '—'  # noqa: E731
         cells.append(f'<td class="num">{mins(w)}<small>{mins(b)}</small></td>')
     body.append(f'<tr><th class="name">カウンセリング時間（中央値）</th>{"".join(cells)}</tr>')
-    return f'<div class="tablewrap"><table class="rv-table"><thead><tr><th class="name"></th>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+    narrow = ' rv-narrow' if len(names) <= 2 else ''
+    return f'<div class="tablewrap"><table class="rv-table{narrow}"><thead><tr><th class="name"></th>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
 
 
 def lis(items):
@@ -110,9 +112,12 @@ CSS = """
 #weekly{margin-top:44px}
 #weekly .rv-lead{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:18px 20px;margin-bottom:16px}
 #weekly .rv-lead p{margin:0 0 8px}#weekly .rv-lead ul{margin:0;padding-left:18px}
-#weekly .rv-table{min-width:880px;font-size:13px}#weekly .rv-table td small{display:block;color:var(--muted);font-size:11px}
+#weekly .rv-table{min-width:880px;font-size:13px}#weekly .rv-table.rv-narrow{min-width:0}#weekly .rv-table td small{display:block;color:var(--muted);font-size:11px}
 #weekly .rv-d{margin-left:4px;font-size:11px;color:var(--muted)}#weekly .rv-good{color:var(--pos)}#weekly .rv-bad{color:var(--neg)}
-#weekly .rv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:16px}
+#weekly .rv-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+#weekly .rv-tab{border:1px solid var(--line);background:var(--surface);color:var(--ink2);font-family:var(--sans);font-size:13px;padding:5px 12px;border-radius:999px;cursor:pointer}
+#weekly .rv-tab[aria-selected="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+#weekly .rv-card{margin-bottom:14px}
 #weekly .rv-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
 #weekly .rv-top h3{font-size:16px}#weekly .rv-kpi{color:var(--muted);font-size:12.5px}
 #weekly .rv-head{font-weight:600;margin:8px 0}
@@ -123,16 +128,31 @@ CSS = """
 
 
 def section(numbers, issues):
+    """チーム全体のタブ（まとめ・全員の表）と、カウンセラーごとのタブ（本人のカードと、本人とクリニック全体の表）。"""
     people = numbers['people']
     w0, w1 = numbers['week']
     b0, b1 = numbers['base']
-    cards = ''.join(card(n, p, (issues.get('people') or {}).get(n, {})) for n, p in people.items() if n != TEAM)
+    weeks = numbers['base_weeks']
+    names = [n for n in people if n != TEAM]
+    iss = issues.get('people') or {}
+    tabs = ['<button type="button" class="rv-tab" role="tab" aria-selected="true" data-rv="0">チーム全体</button>']
+    tabs += [f'<button type="button" class="rv-tab" role="tab" aria-selected="false" data-rv="{k + 1}">{esc(n)}</button>'
+             for k, n in enumerate(names)]
+    panels = [f'<div class="rv-panel" data-rv="0"><div class="rv-lead"><p>{esc(issues.get("overview", ""))}</p>'
+              f'<ul>{lis(issues.get("team"))}</ul></div>{table(people, weeks)}</div>']
+    for k, n in enumerate(names):
+        pair = {n: people[n], TEAM: people[TEAM]} if TEAM in people else {n: people[n]}
+        panels.append(f'<div class="rv-panel" data-rv="{k + 1}" hidden>{card(n, people[n], iss.get(n, {}))}'
+                      f'{table(pair, weeks)}</div>')
+    js = ("<script>(function(){var r=document.getElementById('weekly');if(!r)return;"
+          "var t=r.querySelectorAll('.rv-tab'),p=r.querySelectorAll('.rv-panel');"
+          "t.forEach(function(b){b.addEventListener('click',function(){var v=b.getAttribute('data-rv');"
+          "t.forEach(function(x){x.setAttribute('aria-selected',x===b?'true':'false')});"
+          "p.forEach(function(x){x.hidden=x.getAttribute('data-rv')!==v})})})})();</script>")
     return (f'{BEGIN}<style>{CSS}</style><section class="wrap" id="weekly">'
-            f'<div class="shead"><h2>週次の課題</h2><p>対象週 {w0}〜{w1}（月〜日）。比較は直前{numbers["base_weeks"]}週（{b0}〜{b1}）。'
+            f'<div class="shead"><h2>週次の課題</h2><p>対象週 {w0}〜{w1}（月〜日）。比較は直前{weeks}週（{b0}〜{b1}）。'
             f'{esc(issues.get("updated", ""))}。毎週月曜に更新（上の期間・チャネルの切り替えとは連動しません）</p></div>'
-            f'<div class="rv-lead"><p>{esc(issues.get("overview", ""))}</p><ul>{lis(issues.get("team"))}</ul></div>'
-            f'{table(people, numbers["base_weeks"])}'
-            f'<div class="rv-grid">{cards}</div></section>{END}')
+            f'<div class="rv-tabs" role="tablist">{"".join(tabs)}</div>{"".join(panels)}</section>{js}{END}')
 
 
 def merge(page, block):
