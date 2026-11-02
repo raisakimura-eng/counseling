@@ -6,6 +6,7 @@ JS で描画される。build.py は EMBED の行だけを差し替え、CSS / J
 compute() / board() は JS の compute() / build() / render() の数値部分を1行ずつ移したもの。
 JS を変えたらここも合わせる（check_render.js が Chromium の表示とこの再現を突き合わせる）。
 """
+import decimal
 import json
 import re
 
@@ -117,8 +118,12 @@ class Calc:
                                cat=cat, item=item, tanto=self.canon(tanto)))
         proc = [l for l in leaves if l['item'] is not None]
         dates = sorted({l['date'] for l in proc if l['date']})
+        is_m = bool(day) and len(day) == 7   # 'YYYY-MM' = 月の表示
+
+        def in_sel(d):
+            return not day or ((d or '').startswith(day) if is_m else d == day)
         if day:
-            proc = [l for l in proc if l['date'] == day]
+            proc = [l for l in proc if in_sel(l['date'])]
         roster = {}
 
         def get(n):
@@ -154,7 +159,7 @@ class Calc:
                 v['fees'].append(resolve_fee(fee))
         est_unassigned = 0
         for v in visits.values():
-            if day and v['d'] != day:
+            if day and not in_sel(v['d']):
                 continue
             for n in v['fees']:
                 get(n)['nomFix'] += 1
@@ -168,8 +173,9 @@ class Calc:
                         get(n)['nomEst'] += 1
                 else:
                     est_unassigned += 1
-        p0 = day or (dates[0] if dates else None)
-        p1 = day or (dates[-1] if dates else None)
+        sel = [d for d in dates if in_sel(d)]
+        p0 = (sel[0] if sel else None) if is_m else day or (dates[0] if dates else None)
+        p1 = (sel[-1] if sel else None) if is_m else day or (dates[-1] if dates else None)
         resp, shine = {}, []
         for rd, _pt, typ, target, qtype, title, score, val, rid in D['S']:
             d = dstr(rd)
@@ -188,6 +194,7 @@ class Calc:
                 resp[k]['text'] = val
         resp_list = [x for x in resp.values() if x.get('score') is not None or x.get('text')]
         return dict(proc=proc, dates=dates, roster=roster, resp=resp_list, shine=shine, p0=p0, p1=p1, day=day,
+                    isM=is_m, ndays=len(sel) if is_m else None,
                     est_unassigned=est_unassigned, pDates={v['d'] for v in visits.values()},
                     sDates={dstr(r[0]) for r in D['S']})
 
@@ -228,25 +235,86 @@ class Calc:
         tot_pts = sum(r['pts'] for r in treat)
         all_n = sum(r['n'] for r in rows)
         all_sc = sum(r['avg'] * r['n'] for r in rows if r['avg'] is not None)
-        no_p = bool(C['day']) and C['day'] not in C['pDates']
-        no_s = bool(C['day']) and C['day'] not in C['sDates']
-        return dict(period=(C['p0'], C['p1'], len(C['dates'])), nurses=len(treat), cnt=sum(r['cnt'] for r in treat),
+        one = bool(C['day']) and not C['isM']
+        no_p = one and C['day'] not in C['pDates']
+        no_s = one and C['day'] not in C['sDates']
+        return dict(period=(C['p0'], C['p1'], C['ndays'] or len(C['dates'])), nurses=len(treat), cnt=sum(r['cnt'] for r in treat),
                     pts=tot_pts, nom=None if no_p else fix + est, nomFix=None if no_p else fix, nomEst=None if no_p else est,
                     rate=None if no_p or not tot_pts else (fix + est) / tot_pts,
-                    voc=f"{all_sc / all_n:.2f}" if all_n else None, voc_n=all_n,
+                    voc=to_fixed2(all_sc / all_n) if all_n else None, voc_n=all_n,
                     flagged=sorted(r['name'] for r in rows if r['st'] in ('crit', 'warn')),
                     gapP=[d for d in call['dates'] if d not in call['pDates']],
                     gapS=[d for d in call['dates'] if d not in call['sDates']],
                     unassigned=C['est_unassigned'], noS=no_s)
 
 
+def to_fixed2(v):
+    """JS の toFixed(2) と同じ丸め（2進数の値そのままで四捨五入。4.625 -> '4.63'。Python の :.2f は '4.62'）。"""
+    return str(decimal.Decimal(v).quantize(decimal.Decimal('0.01'), decimal.ROUND_HALF_UP))
+
+
+def months(dates):
+    """表示できる月（'YYYY-MM'）。"""
+    return sorted({d[:7] for d in dates if d})
+
+
+# 月の切り替え（2026-11-02、オーナーの依頼）: 9月からの全期間を1ページに持ち、全期間・月・日で切り替える。
+# 公開中のページの JS をこの置き換えで直す（何度かけても同じ）。compute() / tiles() の Python 再現も同じ形にしてある。
+MONTH_JS = [
+    ("  if(day) proc=proc.filter(l=>l.date===day);",
+     "  const isM=!!day&&day.length===7, inSel=d=>!day||(isM?String(d||'').startsWith(day):d===day);\n"
+     "  if(day) proc=proc.filter(l=>inSel(l.date));"),
+    ("    if(day && v.d!==day) continue;", "    if(day && !inSel(v.d)) continue;"),
+    ("  const p0=day||dates[0], p1=day||dates[dates.length-1];",
+     "  const sel=dates.filter(inSel);\n"
+     "  const p0=isM?sel[0]:(day||dates[0]), p1=isM?sel[sel.length-1]:(day||dates[dates.length-1]);"),
+    ("  return {proc,dates,roster,respList,shine,p0,p1,day,estUnassigned,nurseSet,pDates,sDates};",
+     "  return {proc,dates,roster,respList,shine,p0,p1,day,isM,ndays:isM?sel.length:null,estUnassigned,nurseSet,pDates,sDates};"),
+    ("  const noP=C.day&&!C.pDates.has(C.day), noS=C.day&&!C.sDates.has(C.day);",
+     "  const one=C.day&&!C.isM; const noP=one&&!C.pDates.has(C.day), noS=one&&!C.sDates.has(C.day);"),
+    ("施術・購入：${C.day?C.day.replaceAll", "施術・購入：${one?C.day.replaceAll"),
+    ("+'（'+C.dates.length+'日間）'}", "+'（'+(C.ndays||C.dates.length)+'日間）'}"),
+    ("(C.day?'同日の予約分':'施術と同期間の予約分')", "(one?'同日の予約分':'施術と同期間の予約分')"),
+    ("  heat('daily',allTreat,CALL.dates,r=>d=>r.days[d]||0,d=>md(d)+'('+wd(d)+')',day);",
+     "  heat('daily',allTreat,scopeDates(),r=>d=>r.days[d]||0,d=>md(d)+'('+wd(d)+')',C.isM?null:day);"),
+    ("  const opts=[[null,'全期間'],...CALL.dates.map(d=>[d,md(d)])];",
+     "  const months=[...new Set(CALL.dates.map(d=>d.slice(0,7)))];\n"
+     "  const opts=[[null,'全期間'],...months.map(m=>[m,(+m.slice(5))+'月']),...scopeDates().map(d=>[d,md(d)])];"),
+    ("function setDay(d){",
+     "// 日のボタンと日別のヒートマップは、選んでいる月（全期間のときは最新の月）の日だけ\n"
+     "function scopeDates(){ const ms=[...new Set(CALL.dates.map(d=>d.slice(0,7)))]; const m=day?day.slice(0,7):ms[ms.length-1];"
+     " return CALL.dates.filter(d=>d.startsWith(m)); }\n"
+     "function setDay(d){"),
+]
+MONTH_MARK = 'function scopeDates()'
+
+
+# 月のボタンが増えても「全期間」「9月」が縦に潰れないように（ボタンは折り返さず、バーは横にスクロール）
+MONTH_CSS = '#dayBar{overflow-x:auto;max-width:100%}#dayBar button{white-space:nowrap;flex:0 0 auto}'
+
+
+def migrate_months(html):
+    """公開中のページの JS を、全期間・月・日の切り替えに直す（済んでいれば何もしない）。"""
+    if MONTH_CSS not in html:
+        if html.count('</style>') < 1:
+            raise SystemExit('STOP: the page has no </style>; cannot add the month-bar CSS')
+        html = html.replace('</style>', MONTH_CSS + '\n</style>', 1)
+    if MONTH_MARK in html:
+        return html
+    for old, new in MONTH_JS:
+        if html.count(old) != 1:
+            raise SystemExit(f'STOP: the page JS is not what migrate_months expects: {old[:60]!r}')
+        html = html.replace(old, new)
+    return html
+
+
 def views(html_or_embed, cfg):
-    """ページで選べる表示（全期間 × VOC 2種、各日 × VOC 2種）ごとの (tiles, rows)。"""
+    """ページで選べる表示（全期間・各月・各日 × VOC 2種）ごとの (tiles, rows)。"""
     D = html_or_embed if isinstance(html_or_embed, dict) else get_embed(html_or_embed)
     calc = Calc(cfg)
     call = calc.compute(D)
     out = {}
-    for day in [None] + call['dates']:
+    for day in [None] + months(call['dates']) + call['dates']:
         C = call if day is None else calc.compute(D, day)
         for mode in ('same', 'all'):
             rows = calc.board(C, mode)

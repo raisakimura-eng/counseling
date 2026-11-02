@@ -1,4 +1,4 @@
-// 看護師ダッシュボードを Chromium で開き、全期間・各日 × VOC（施術と同期間／全回答）を切り替え、
+// 看護師ダッシュボードを Chromium で開き、全期間・各月・各日 × VOC（施術と同期間／全回答）を切り替え、
 // 表の並べ替え・行の選択・Excel 読み込み欄の開閉もして、JS エラーや「NaN」「undefined」「Infinity」「null」の表示がないか確認する。
 // --expect EXPECT.json（verify.py --expect の出力）を付けると、各表示のサマリー・スコアボードの各行・VOC コメント数が
 // Python の再現（page.Calc）と同じかも確かめる（ページの JS と verify.py の集計がずれていないことの確認）。
@@ -62,10 +62,17 @@ function diff(where, got, exp, errs) {
     page.on('console', m => { if (m.type() === 'error' && !/fonts\.g|xlsx|cdnjs|ERR_/.test(m.text())) errs.push('console: ' + m.text()); });
     await page.goto('file://' + path.resolve(f));
     await page.waitForSelector('#board tbody tr', { timeout: 15000 }).catch(() => errs.push('scoreboard has no rows'));
+    // 全期間・各月・各日: 日のボタンは選んだ月の分だけ出るので、押すたびに出てきたボタンを足していく
     const days = await page.$$eval('#dayBar button', b => b.map(x => x.dataset.d));
+    const seen = new Set(days);
     let views = 0, compared = 0;
-    for (const d of days) {
+    for (let i = 0; i < days.length; i++) {
+      const d = days[i];
+      // 日のボタンが今の月に出ていなければ、先にその月を選ぶ
+      if (d.length === 10 && !(await page.$(`#dayBar button[data-d="${d}"]`))) await page.click(`#dayBar button[data-d="${d.slice(0, 7)}"]`);
       await page.click(`#dayBar button[data-d="${d}"]`);
+      for (const x of await page.$$eval('#dayBar button', b => b.map(y => y.dataset.d)))
+        if (!seen.has(x)) { seen.add(x); days.push(x); }
       for (const mode of ['same', 'all']) {
         await page.click(mode === 'same' ? '#vocSame' : '#vocAll');
         const where = `${d || 'ALL'}|${mode}`;

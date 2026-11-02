@@ -43,6 +43,10 @@ JST = A.JST
 STAFF_CSV = os.path.join(HERE, '..', '..', '..', 'data', 'staff_roles.csv')
 
 
+# 2026-11-02（オーナーの依頼）から、ページは9月1日からの全期間を持ち、全期間・月・日で切り替える（page.migrate_months）
+FIRST_DAY = dt.date(2026, 9, 1)
+
+
 def month_start(d):
     return d.replace(day=1)
 
@@ -156,7 +160,7 @@ def main():
     os.umask(0o077)
 
     until = dt.date.fromisoformat(a.until) if a.until else dt.datetime.now(JST).date() - dt.timedelta(days=1)
-    d0 = dt.date.fromisoformat(a.d0) if a.d0 else month_start(until)
+    d0 = dt.date.fromisoformat(a.d0) if a.d0 else FIRST_DAY
     html = page.read_html(a.html)
     old_cfg = page.config(html)
     cfg = merged_config(old_cfg)
@@ -211,7 +215,7 @@ def main():
     if warn and a.strict_new_staff:
         sys.exit('STOP: names that need a human decision (see WARNING lines; README「人の判断が要るもの」)')
 
-    out = page.set_config(page.set_embed(html, new), cfg)
+    out = page.set_config(page.set_embed(page.migrate_months(html), new), cfg)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(out)
     t = new_v[('ALL', 'same')][0]
