@@ -24,6 +24,11 @@ NO_RATE_FROM = __import__('datetime').date(2026, 10, 15)
 def rate(d):
     """来院率 used by the forecast for visit day D."""
     return RATE if d < NO_RATE_FROM else {'初診': 1.0, '再診': 1.0}
+
+
+# From 2026-11-01 (owner's decision) the 朝の予想 of a closed day (Amorning) is the forecast of the reservations
+# made before 0:00 that actually came (same-day cancellations left out). The forecast published at 0:00 is kept as Am0.
+MORNING_VISITORS_FROM = __import__('datetime').date(2026, 11, 1)
 TYPES = ('初診', '再診')
 
 # Statuses

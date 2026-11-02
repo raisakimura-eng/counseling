@@ -88,7 +88,9 @@ def analyse(raw, consts, day, work, targets, n_past=6):
     # 1. 予想と実績の差の理由 (寄与額)
     contrib = {
         '当日予約（当日に入った予約の決済）': rec['sd']['paid'],
-        '当日キャンセル（予想に入っていた分）': -round(sum(config.rate(day)[s['who']] * (s['amt'] or avg) for s in rec['same'])),
+        # from MORNING_VISITORS_FROM the 朝の予想 holds only the reservations that came, so no same-day cancellation is in it
+        '当日キャンセル（予想に入っていた分）': 0 if rec['AmSrc'] == 'visitors' else
+        -round(sum(config.rate(day)[s['who']] * (s['amt'] or avg) for s in rec['same'])),
         '増額（予約金額より多い決済）': rec['upS'],
         '減額（予約金額より少ない決済）': rec['dnS'],
         '決済0円（予約金額あり）': -rec['zsum'],
@@ -110,7 +112,8 @@ def analyse(raw, consts, day, work, targets, n_past=6):
         cases.append({'who': x.who(r), '予約メニュー': menu_label(r), '予約金額': resv(r), '実際の施術': act or '施術記録なし',
                       '予約になかった施術': added, '決済額': paid(r), '差': paid(r) - resv(r),
                       'プリペイド購入': buyers.get(r['visitorId'], 0)})
-    item1 = {'朝の予想（0:00時点の予約）': rec['Amorning'], '着地結果（来院ベース）': rec['C'], '着地結果（決済ベース）': payC,
+    item1 = {'朝の予想': rec['Amorning'],
+             '朝の予想の定義': '0:00時点の予約のうち来院した方（当日キャンセルを除く）' if rec['AmSrc'] == 'visitors' else '0:00時点の予約', '着地結果（来院ベース）': rec['C'], '着地結果（決済ベース）': payC,
              '差（来院ベース − 朝の予想）': rec['C'] - rec['Amorning'],
              '差（決済ベース − 朝の予想）': payC - rec['Amorning'] if payC is not None else None,
              '寄与額（大きい順）': sorted(([k, v] for k, v in contrib.items() if v), key=lambda kv: -abs(kv[1])),
@@ -206,7 +209,7 @@ def facts(n, rec):
     f = {}
     i1 = n['1_予想と実績の差']
     top = i1['寄与額（大きい順）'][:3]
-    f['1'] = [f"朝の予想 {yen(i1['朝の予想（0:00時点の予約）'])} → 着地結果 {yen(i1['着地結果（来院ベース）'])}（来院ベース、差 {i1['差（来院ベース − 朝の予想）']:+,}円）"
+    f['1'] = [f"朝の予想 {yen(i1['朝の予想'])} → 着地結果 {yen(i1['着地結果（来院ベース）'])}（来院ベース、差 {i1['差（来院ベース − 朝の予想）']:+,}円）"
               + (f"、決済ベース {yen(i1['着地結果（決済ベース）'])}（差 {i1['差（決済ベース − 朝の予想）']:+,}円）" if i1['着地結果（決済ベース）'] is not None else ''),
               '寄与の大きい順: ' + '、'.join(f'{k} {v:+,}円' for k, v in top)]
     for c in i1['目立ったケース']:

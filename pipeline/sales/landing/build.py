@@ -145,11 +145,15 @@ def gen_texts(consts, base_days_n, today):
     b, c = mon['b'], mon['c']
     cur = consts['DAYS_CUR']
     snap = [d['date'] for d in cur if d['AmSrc'] == 'snapshot']
-    recon = [d['date'] for d in cur if d['AmSrc'] != 'snapshot']
+    recon = [d['date'] for d in cur if d['AmSrc'] == 'recon']
+    vis = [d['date'] for d in cur if d['AmSrc'] == 'visitors']
     ex = consts['TODAY'].get('_excl', {})
     parts = []
     if snap:
         parts.append(f'{snap[0]}〜{snap[-1]}は実際に朝お出しした予想' if len(snap) > 1 else f'{snap[0]}は実際に朝お出しした予想')
+    if vis:
+        parts.append(f'{vis[0]}〜{vis[-1]}' if len(vis) > 1 else vis[0])
+        parts[-1] += 'は0:00時点の予約のうち実際に来院した方の予想（当日キャンセルを除く）'
     if recon:
         parts.append(f'{recon[0]}〜{recon[-1]}は予約登録日から朝の時点の予約を再現しています' if len(recon) > 1 else f'{recon[0]}は予約登録日から朝の時点の予約を再現しています')
     g = consts['TARGET']
@@ -317,7 +321,7 @@ def repair(html, raw, labels):
             bad = aggregate.treatment_price_problem(raw, d)
             if bad:
                 raise SystemExit(f'STOP: the API data is still incomplete: {bad}')
-            new = aggregate.day_record(raw, d, morning=rec['Amorning'], pay_based='payC' in rec)
+            new = aggregate.day_record(raw, d, morning=rec.get('Am0', rec['Amorning']), pay_based='payC' in rec)
             old = {f: rec.get(f) for f in REPAIR_FIELDS}
             for f in REPAIR_FIELDS:
                 if f in new:

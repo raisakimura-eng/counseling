@@ -273,6 +273,10 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'prep': prep,
         'Amorning': round(morning) if morning is not None else round(Am),
         'AmSrc': 'snapshot' if morning is not None else 'recon',
+        **({'Am0': round(morning) if morning is not None else round(Am), 'AmSrc': 'visitors',
+            'Am0Src': 'snapshot' if morning is not None else 'recon',
+            'Amorning': round(forecast([r for r in vis if reserved_at(r) < x.day0], avg, d))}
+           if d >= config.MORNING_VISITORS_FROM else {}),
         'sameSrc': 'snapshot' if snap is not None else 'memo',
     }
     rec['factors'] = factors(rec, x, vis, nomenu, zeros, ups, dns, sameT, vr)

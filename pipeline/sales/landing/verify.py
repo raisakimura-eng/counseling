@@ -4,7 +4,8 @@
 
 For every day of DAYS_BASE and DAYS_CUR on the page, the day is rebuilt from the API the way build.py
 would build it without a 0:00 snapshot (cancellation timing from status + 予約メモ; the page's own
-朝の予想 is reused for days marked AmSrc=snapshot, since that number cannot be recomputed). Also checks
+朝の予想 is reused for days marked AmSrc=snapshot, or the 0:00 forecast Am0 for AmSrc=visitors days with
+Am0Src=snapshot, since that number cannot be recomputed). Also checks
 売上目標の進捗 (TARGET actual rows = 決済ベース), MONTH, the September 決済 summary and TODAY.
 
 Exit code: 0 = done (differences are reported, not fatal); 2 = a check that must hold failed:
@@ -29,6 +30,13 @@ KPI = ['aov', 'payAov', 'tpp', 'multi', 'nomenuN']
 LISTS = ['lead', 'ages', 'ch', 'prep', 'trTot', 'push']
 
 
+def morning_of(p):
+    """The published 0:00 forecast to reuse (it cannot be recomputed), or None when it was reconstructed."""
+    if p['AmSrc'] == 'visitors':
+        return p['Am0'] if p.get('Am0Src') == 'snapshot' else None
+    return p['Amorning'] if p['AmSrc'] == 'snapshot' else None
+
+
 def day_date(lbl, year):
     m, d = map(int, lbl.split('/'))
     return dt.date(year, m, d)
@@ -38,7 +46,7 @@ def compare_days(raw, days, year, fields):
     rows, tot = [], collections.defaultdict(lambda: [0, 0])
     for p in days:
         d = day_date(p['date'], year)
-        r = aggregate.day_record(raw, d, morning=p['Amorning'] if p['AmSrc'] == 'snapshot' else None, pay_based='payC' in p)
+        r = aggregate.day_record(raw, d, morning=morning_of(p), pay_based='payC' in p)
         diff = {}
         for f in fields:
             a = p.get(f) if f not in KPI else p['kpi'].get(f)
