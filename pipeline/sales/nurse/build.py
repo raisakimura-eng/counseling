@@ -195,7 +195,8 @@ def main():
         for k in ('DOCTORS', 'ALIAS', 'MENTION'):
             if cfg[k] != old_cfg[k]:
                 print(f'page constant {k} updated (build.PAGE_ADD / staff_roles.csv)')
-    settled = {d for (d, _) in old_v if d != 'ALL' and d <= (until - dt.timedelta(days=2)).isoformat()
+    # 日の表示だけ（'YYYY-MM' の月の表示は、その月が続く間は毎日増えるので比べない）
+    settled = {d for (d, _) in old_v if len(d) == 10 and d <= (until - dt.timedelta(days=2)).isoformat()
                and d >= d0.isoformat()}
     dr = drift(page.views(old, cfg) if cfg != old_cfg else old_v, new_v, settled)   # データの変化だけを見る（設定は同じにそろえる）
     if dr and not a.accept_closed_month_changes:
