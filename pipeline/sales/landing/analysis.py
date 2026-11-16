@@ -95,6 +95,7 @@ def analyse(raw, consts, day, work, targets, n_past=6):
         '減額（予約金額より少ない決済）': rec['dnS'],
         '決済0円（予約金額あり）': -rec['zsum'],
         'メニュー未入力の補完との差': rec['wf'][2][1] if rec['wf'][2][0] == '未入力の補完' else 0,
+        'メニュー未入力の決済（予想は0円）': rec['wf'][2][1] if rec['wf'][2][0] == '未入力の決済' else 0,
         'スタッフ・PR枠の自費': rec.get('Cex', 0),
         'プリペイド販売（決済ベースのみ）': rec['prep']['buyAmt'],
         'プリペイドでの支払い（決済ベースから除く）': -rec['prep']['useAmt'],

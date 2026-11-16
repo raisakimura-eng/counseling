@@ -31,9 +31,10 @@ def _avg(xs):
 
 def forecast(rows, avg, d):
     """予約金額 × 来院率 of visit day D (config.rate: 初診90%・再診95% up to 10/14, 100% from 10/15);
-    メニュー未入力 (予約金額0) is filled with AVG."""
+    メニュー未入力 (予約金額0) is filled with AVG (0円 from config.NOMENU_ZERO_FROM)."""
     R = rate(d)
-    return sum(R[vtype(r)] * (resv(r) or avg) for r in rows)
+    fill = 0 if config.nomenu_zero(d) else avg
+    return sum(R[vtype(r)] * (resv(r) or fill) for r in rows)
 
 
 def proc_tasks(raw, d):
@@ -166,8 +167,10 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     upS = sum(paid(r) - resv(r) for r in ups)
     dnS = sum(paid(r) - resv(r) for r in dns)
     zsum = sum(resv(r) for r in zeros)
-    rate_gap = sum(resv(r) or avg for r in vis) - A
-    fill = sum(paid(r) - avg for r in nomenu)  # 未入力の補完: actual payment instead of the filled average
+    zero = config.nomenu_zero(d)
+    fa = 0 if zero else avg  # what the forecast put in for a reservation without a menu
+    rate_gap = sum(resv(r) or fa for r in vis) - A
+    fill = sum(paid(r) - fa for r in nomenu)  # 未入力の補完: actual payment instead of the filled average (未入力の決済 when 0円)
     typ = []
     for t in TYPES:
         p, v = by_t(plan, t), by_t(vis, t)
@@ -246,9 +249,9 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'bookT': {t: len(by_t(plan, t)) for t in TYPES}, 'visN': len(vis), 'cancN': len(x.cancelled),
         'rebook': len({r['visitorId'] for r in x.rebook}), 'A': round(A), 'low': round(low), 'cal': None, 'C': C, 'resvV': resvV,
         'missN': sum(1 for r in plan if resv(r) == 0), 'avg': round(avg),
-        'wf': [['着地予想', round(A)], ['来院率の差' if d < config.NO_RATE_FROM else '当日キャンセル', round(rate_gap)], ['未入力の補完', round(fill)],
+        'wf': [['着地予想', round(A)], ['来院率の差' if d < config.NO_RATE_FROM else '当日キャンセル', round(rate_gap)], ['未入力の決済' if zero else '未入力の補完', round(fill)],
                ['決済0円', -zsum], ['減額', dnS], ['増額', upS], ['着地結果', C]],
-        'wfnotes': ['当日基準の来院予定', f'当日キャンセル{len(x.same)}件', f'未入力{len(nomenu)}件（平均単価{yen(avg)}円で補完）',
+        'wfnotes': ['当日基準の来院予定', f'当日キャンセル{len(x.same)}件', f'未入力{len(nomenu)}件（予想は0円）' if zero else f'未入力{len(nomenu)}件（平均単価{yen(avg)}円で補完）',
                     f'予約金額ありで0円の{len(zeros)}件', f'予約金額より少ない{len(dns)}件', f'予約金額より多い{len(ups)}件', '決済総額'],
         'typ': typ,
         'zeros': [{'who': x.who(r), 'menu': menu_label(r), 'amt': resv(r)} for r in sorted(zeros, key=lambda r: -resv(r))],
@@ -324,7 +327,9 @@ def factors(rec, x, vis, nomenu, zeros, ups, dns, sameT, vr):
                     + (f'実際は{act}（{yen(paid(r))}円）でした。' if act else f'{yen(paid(r))}円の決済でした。')})
     nz = sum(1 for r in nomenu if paid(r) == 0)
     out.append({'k': 'メニュー未入力', 'v': rec['wf'][2][1], 'text': (
-        f"メニュー未入力の来院{len(nomenu)}件を平均予約単価{yen(rec['avg'])}円で見込みましたが、実際の決済は計{yen(sum(paid(r) for r in nomenu))}円でした（うち{nz}件は決済0円）。"
+        (f"メニュー未入力の来院{len(nomenu)}件は予想に含めず（0円）、実際の決済は計{yen(sum(paid(r) for r in nomenu))}円でした（うち{nz}件は決済0円）。"
+         if config.nomenu_zero(x.d) else
+         f"メニュー未入力の来院{len(nomenu)}件を平均予約単価{yen(rec['avg'])}円で見込みましたが、実際の決済は計{yen(sum(paid(r) for r in nomenu))}円でした（うち{nz}件は決済0円）。")
         if nomenu else 'メニュー未入力の来院はありませんでした。')})
     g = rec['wf'][1][1]
     if x.d < config.NO_RATE_FROM:
@@ -514,13 +519,15 @@ def today_record(raw, d, base, now_label='0:00時点'):
     by_t = lambda rs, t: [r for r in rs if vtype(r) == t]  # noqa: E731
     coef = base['coef']
     R = rate(d)
+    zero = config.nomenu_zero(d)
+    fz = {t: 0 for t in TYPES} if zero else coef['fill']  # 補完単価 of a reservation without a menu
     byType, cur, cal = {}, 0, 0
     for t in TYPES:
         a = by_t(active, t)
         amt = sum(resv(r) for r in a)
         none = sum(1 for r in a if resv(r) == 0)
-        c_raw = R[t] * (amt + none * coef['fill'][t])
-        c_cal = R[t] * (amt * coef['upsell'][t] + none * coef['fill'][t])
+        c_raw = R[t] * (amt + none * fz[t])
+        c_cal = R[t] * (amt * coef['upsell'][t] + none * fz[t])
         byType[t] = {'n': len(a), 'amt': amt, 'cal': round(c_cal)}
         cur += c_raw
         cal += c_cal
@@ -573,7 +580,9 @@ def today_record(raw, d, base, now_label='0:00時点'):
                       f'スタッフ・インフルエンサー枠{exN}件を除いて{len(active)}件）を使い、予約金額は予約・来院データの実額を当てています。'
                       f'このあと入る当日予約と、当日のキャンセルは含まれていません。'),
         'finalNote': None, 'hasHistory': True, 'pushBook': hpb_booked(active),
-        'fillNote': f"メニュー未入力の{none}件は、前月の未入力の方の実績（初診{yen(fill['初診'])}円・再診{yen(fill['再診'])}円）で補完しています。",
+        'fillNote': (f"メニュー未入力の{none}件は0円で見込んでいます。" if zero else
+                     f"メニュー未入力の{none}件は、前月の未入力の方の実績（初診{yen(fill['初診'])}円・再診{yen(fill['再診'])}円）で補完しています。"),
+        'nomenuZero': zero,
         'coef': coef,
         # 0:00 snapshot: which reservations were active when this forecast was made (first 8 chars of the
         # scheduleId). The next run uses it to find the cancellations made during the day.

@@ -140,6 +140,19 @@ def rate_note(mon):
     return f'{prev.month}/{prev.day}までは来院率 初診90%・再診95%、{nr.month}/{nr.day}からは来院率を掛けず予約金額そのまま'
 
 
+def nomenu_note(mon):
+    """How the forecast of the current month's days counted メニュー未入力 (補完 up to 11/16, 0円 from 11/17)."""
+    first = dt.date(mon['y'], mon['c'], 1)
+    last = (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+    z = config.NOMENU_ZERO_FROM
+    if last < z:
+        return f"メニュー未入力は{mon['b']}月の未入力の方の実績で補完"
+    if first >= z:
+        return 'メニュー未入力は0円で見込み'
+    prev = z - dt.timedelta(days=1)
+    return f'メニュー未入力は{prev.month}/{prev.day}までは補完、{z.month}/{z.day}からは0円で見込み'
+
+
 def gen_texts(consts, base_days_n, today):
     mon = consts['MON']
     b, c = mon['b'], mon['c']
@@ -159,7 +172,7 @@ def gen_texts(consts, base_days_n, today):
     g = consts['TARGET']
     ca = consts['TODAY']['coefAll']
     return {
-        'sub': f'（差額＝実決済 − 予約時点の予想。{rate_note(mon)}。メニュー未入力は{b}月の未入力の方の実績で補完）',
+        'sub': f'（差額＝実決済 − 予約時点の予想。{rate_note(mon)}。{nomenu_note(mon)}）',
         'goalFoot': f'予約データのない日は、{b}月の同じ曜日の平均で見込んでいます。日割り目標は、{g["days"]}日すべて営業する前提で等分しています。',
         'cmpFoot': ('、'.join(parts) + '。') if parts else f'{c}月はまだ実績がありません。',
         'tbaseSub': f'{mon["calib"]}の実績から算出',
@@ -198,7 +211,7 @@ def build(html, raw, today, targets, summary_text=None):
         mon = seed(consts)
         html = page.migrate(html, mon)
         consts['MON'] = mon
-    html = page.migrate_norate(page.migrate_live(page.migrate_summaries(html)))
+    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html))))
     consts.setdefault('SUMMARIES', [])
     mon = consts['MON']
     T0 = consts['TODAY']
@@ -338,10 +351,12 @@ def repair(html, raw, labels):
 
 
 def cal_of(raw, d, coef):
-    """補正ロジックの予想: 来院予定 × 前月の来院率 × (予約金額 × 前月の上乗せ率, 未入力は前月の未入力の実績)."""
+    """補正ロジックの予想: 来院予定 × 前月の来院率 × (予約金額 × 前月の上乗せ率, 未入力は前月の未入力の実績、
+    config.NOMENU_ZERO_FROM からは0円)."""
     x = aggregate.Day(raw, d)
     from data import resv, vtype
-    return sum(coef['vrate'][vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else coef['fill'][vtype(r)]) for r in x.plan)
+    fill = {t: 0 for t in config.TYPES} if config.nomenu_zero(d) else coef['fill']
+    return sum(coef['vrate'][vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else fill[vtype(r)]) for r in x.plan)
 
 
 INTRADAY_FIELDS = ('done', 'wait', 'doneT', 'hours', 'live')
@@ -359,7 +374,7 @@ def intraday(html, raw, today, now, as_of=None):
     AS_OF (aware datetime): replay an earlier hour of a finished day — the data must have been fetched up to
     that time (fetch.py --until); a reservation counts as 来院 if it was received by then."""
     from data import JST, excluded, jst, money, paid, resv, start, vtype
-    html = page.migrate_norate(page.migrate_live(html))
+    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html)))
     consts = page.get_consts(html)
     T = consts['TODAY']
     if T['date'] != dlabel(today):
@@ -407,8 +422,9 @@ def intraday(html, raw, today, now, as_of=None):
     coef, rate = T['coef'], config.rate(today)
     future = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') >= cut] + inprog
     past = [r for r in core if r['reservationStatus'] == 'RESERVED' and start(r).strftime('%H:%M') < cut]
-    base = sum(rate[vtype(r)] * (resv(r) or coef['fill'][vtype(r)]) for r in future)
-    upb = sum(rate[vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else coef['fill'][vtype(r)]) for r in future)
+    fill = {t: 0 for t in config.TYPES} if config.nomenu_zero(today) else coef['fill']
+    base = sum(rate[vtype(r)] * (resv(r) or fill[vtype(r)]) for r in future)
+    upb = sum(rate[vtype(r)] * (resv(r) * coef['upsell'][vtype(r)] if resv(r) else fill[vtype(r)]) for r in future)
     bad = aggregate.treatment_price_problem(raw, today)
     if bad:
         raise SystemExit(f'STOP: 施術データの価格がまだ反映されていないようです（{bad}）。この回は公開しません')

@@ -372,3 +372,35 @@ def migrate_norate(html):
             raise SystemExit(f'STOP: page changed; expected {n}× {old[:60]!r}, found {c}')
         head = head.replace(old, new)
     return head + js + tail
+
+
+JS_EDITS_5 = [
+    # from 11/17 a reservation without a menu counts 0円 in the forecast (config.NOMENU_ZERO_FROM); TODAY.nomenuZero says so
+    ("残りの予約の予約金額（未入力は補完）${yen(L.fut.base)}円を足した額",
+     "残りの予約の予約金額（未入力は${T.nomenuZero ? '0円' : '補完'}）${yen(L.fut.base)}円を足した額", 1),
+    ("メニュー未入力の予約は、現行ロジックでは平均予約単価（${yen(T.avg)}円）で補完しています。",
+     "${T.nomenuZero ? 'メニュー未入力の予約は0円で見込んでいます。' : `メニュー未入力の予約は、現行ロジックでは平均予約単価（${yen(T.avg)}円）で補完しています。`}", 1),
+]
+HTML_EDITS_5 = [
+    ("現行は平均予約単価で一律に補完しています。", "11/17からはメニュー未入力を0円で見込んでいます（11/16までは平均予約単価で一律に補完）。", 1),
+]
+
+
+def migrate_nomenu_zero(html):
+    """Stage 5 (idempotent): wording for メニュー未入力 counted as 0円 (from 2026-11-17)."""
+    if 'T.nomenuZero' in html:
+        return html
+    a, b = script_bounds(html)
+    js = html[a:b]
+    for old, new, n in JS_EDITS_5:
+        c = js.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page code changed; expected {n}× {old[:60]!r}, found {c}')
+        js = js.replace(old, new)
+    head, tail = html[:a], html[b:]
+    for old, new, n in HTML_EDITS_5:
+        c = head.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page changed; expected {n}× {old[:60]!r}, found {c}')
+        head = head.replace(old, new)
+    return head + js + tail
