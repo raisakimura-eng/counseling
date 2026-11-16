@@ -141,7 +141,7 @@ def rate_note(mon):
 
 
 def nomenu_note(mon):
-    """How the forecast of the current month's days counted メニュー未入力 (補完 up to 11/16, 0円 from 11/17)."""
+    """How the forecast of the current month's days counted メニュー未入力 (補完 up to 10/31, 0円 from 11/1)."""
     first = dt.date(mon['y'], mon['c'], 1)
     last = (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
     z = config.NOMENU_ZERO_FROM
@@ -235,6 +235,10 @@ def build(html, raw, today, targets, summary_text=None):
         recs[dlabel(e)] = aggregate.day_record(raw, e, snap=snap, morning=m, pay_based=True)
         recs[dlabel(e)]['cal'] = round(cal_of(raw, e, T0['coefAll']))
     consts['DAYS_CUR'] = [recs[k] for k in sorted(recs, key=lambda s: tuple(map(int, s.split('/'))))]
+    # published days from config.NOMENU_ZERO_FROM made with メニュー未入力 filled: restate them once to the 0円 rule
+    for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
+        for rec in consts[key]:
+            restate_nomenu(raw, rec, label_date(rec['date'], year), T0['coefAll'])
     # published days made before the excluded visits' own payments were counted: add them once
     for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
         for rec in consts[key]:
@@ -311,6 +315,101 @@ def restate(raw, rec, d):
         if pb['total'] != rec['payC']:
             rec['payC'] = pb['total']
             rec['payNote'] = aggregate.pay_note(pb, rec['prep'], rec['C'])
+
+
+def restate_nomenu(raw, rec, d, coef_all):
+    """Restate a closed day published with メニュー未入力 filled (wf step 「未入力の補完」) to the 0円 rule
+    (config.NOMENU_ZERO_FROM). From the published values: A (当日基準: missN reservations × avg out), the waterfall
+    (当日キャンセル / 未入力の決済), the 「メニュー未入力」 sentence. From the API (they do not depend on the 0:00
+    snapshot): Amorning (visits booked before 0:00), Aold. cal: the fill of the reservations without a menu taken out.
+    C, upS, dnS, zsum and everything else stay as published. Returns True if the record changed."""
+    import re
+    from data import paid, reserved_at, resv, vtype
+    if not config.nomenu_zero(d) or rec['wf'][2][0] != '未入力の補完':
+        return False
+    if not raw.sched.get(d):
+        raise SystemExit(f'STOP: no KOS reservation data for {d} in $WORK/raw (needed to restate {rec["date"]}); fetch it first')
+    R = config.rate(d)
+    n = int(re.match(r'未入力(\d+)件', rec['wfnotes'][2]).group(1))  # visits without a menu, as published
+    # 来院予定 = 来院 + 当日キャンセル: its 予約金額 and the unrounded average the published forecast filled with
+    plan_resv = rec['resvV'] + sum(s['amt'] for s in rec['same'])
+    avg = plan_resv / (rec['bookN'] - rec['missN']) if rec['bookN'] > rec['missN'] else 0
+    rec['A'] = round(sum(R[t['t']] * t['resv'] for t in rec['typ']) + sum(R[s['who']] * s['amt'] for s in rec['same']))
+    rec['wf'][0][1] = rec['A']
+    rec['wf'][1][1] = round(sum(t['resv'] for t in rec['typ']) - rec['A'])
+    rec['wf'][2] = ['未入力の決済', round(rec['wf'][2][1] + n * avg)]
+    rec['wfnotes'][2] = f'未入力{n}件（予想は0円）'
+    x = aggregate.Day(raw, d)
+    vis = x.visited
+    rec['Amorning'] = round(aggregate.forecast([r for r in vis if reserved_at(r) < x.day0], 0, d))
+    rec['Aold'] = round(aggregate.forecast(x.full, 0, d))
+    if rec.get('cal') is not None:
+        fill = coef_all['fill']
+        out = sum(coef_all['vrate'][vtype(r)] * fill[vtype(r)] for r in vis if resv(r) == 0)
+        out += sum(coef_all['vrate'][s['who']] * fill[s['who']] for s in rec['same'] if not s['amt'])
+        rec['cal'] = round(rec['cal'] - out)
+    for f in rec['factors']:
+        if f['k'] == 'メニュー未入力' and n:
+            m = re.search(r'うち(\d+)件は決済0円', f['text'])
+            nz = m.group(1) if m else sum(1 for r in vis if resv(r) == 0 and paid(r) == 0)
+            f['v'] = rec['wf'][2][1]
+            f['text'] = f"メニュー未入力の来院{n}件は予想に含めず（0円）、実際の決済は計{aggregate.yen(rec['wf'][2][1])}円でした（うち{nz}件は決済0円）。"
+        elif f['k'] in ('当日キャンセル', '来院率'):
+            f['v'] = rec['wf'][1][1]
+    return True
+
+
+def restate_today_nomenu(raw, consts, today):
+    """Restate TODAY (published at 0:00 with メニュー未入力 filled) to the 0円 rule: the forecast becomes the 予約金額
+    of the 0:00 reservations (TODAY.byType amounts), 上乗せ補正 likewise; 総予約数基準 from the API (the 0:00
+    reservations of TODAY.snap + those already cancelled before 0:00). TARGET's 本日 and morning entry follow.
+    Returns True if TODAY changed."""
+    from data import excluded, reserved_at, resv
+    T = consts['TODAY']
+    if T['date'] != dlabel(today) or not config.nomenu_zero(today) or T.get('nomenuZero') or T.get('final'):
+        return False
+    R = config.rate(today)
+    coef = T['coef']
+    for t in config.TYPES:
+        T['byType'][t]['cal'] = round(R[t] * T['byType'][t]['amt'] * coef['upsell'][t])
+    T['cur'] = round(sum(R[t] * T['byType'][t]['amt'] for t in config.TYPES))
+    T['raw'] = T['cur']
+    T['cal'] = sum(T['byType'][t]['cal'] for t in config.TYPES)
+    snap = set(T.get('snap') or [])
+    day0 = dt.datetime.combine(today, dt.time(), JST)
+    rows = [r for r in raw.sched.get(today, []) if not excluded(r)]
+    at0 = [r for r in rows if r['scheduleId'][:8] in snap]
+    before = [r for r in rows if r['scheduleId'][:8] not in snap and r['reservationStatus'] in config.CANCELLED and reserved_at(r) < day0]
+    if len(at0) != T['active'] or len(at0) + len(before) != T['fullN']:
+        raise SystemExit(f"STOP: the KOS data of {today} does not match TODAY ({len(at0)}/{T['active']} reservations of the 0:00 snapshot, "
+                         f"{len(at0) + len(before)}/{T['fullN']} with cancellations); not restating today's forecast")
+    T['full'] = round(aggregate.forecast(at0 + before, 0, today))
+    T['fillNote'] = f"メニュー未入力の{T['noneN']}件は0円で見込んでいます。"
+    T['nomenuZero'] = True
+    G = consts['TARGET']
+    for r in G['rows']:
+        if r[3] == 'today':
+            r[2] = T['cur']
+    G['morning'][dlabel(today)] = T['cur']
+    return True
+
+
+def restate_nomenu_page(html, raw, today):
+    """--restate-nomenu: restate the closed days from config.NOMENU_ZERO_FROM and today's forecast (published before the
+    0円 rule) without closing a day. Everything else stays as published."""
+    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html))))
+    consts = page.get_consts(html)
+    mon = consts['MON']
+    done = []
+    for key, year in (('DAYS_BASE', mon['by']), ('DAYS_CUR', mon['y'])):
+        for rec in consts[key]:
+            if restate_nomenu(raw, rec, label_date(rec['date'], year), consts['TODAY']['coefAll']):
+                done.append(rec['date'])
+    if restate_today_nomenu(raw, consts, today):
+        done.append(f"本日{consts['TODAY']['date']}")
+    out = page.set_consts(html, {k: consts[k] for k in ['DAYS_BASE', 'DAYS_CUR', 'TODAY', 'TARGET']})
+    out = page.set_gen(out, {'sub': gen_texts(consts, len(consts['DAYS_BASE']), today)['sub']})
+    return out, done, consts
 
 
 REPAIR_FIELDS = ('trTop', 'trCnt', 'trTot', 'kpi', 'swings', 'zeros', 'push', 'prep', 'hasTr', 'hasPrep')
@@ -482,6 +581,8 @@ def main():
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only the results of today (see intraday())')
     ap.add_argument('--repair-day', nargs='+', metavar='M/D', help='修理: rebuild the 施術・購入-based items of these closed days from the API')
     ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday: replay this time of a finished day (data fetched with --until)')
+    ap.add_argument('--restate-nomenu', action='store_true', help='restate the published days from config.NOMENU_ZERO_FROM and '
+                    "today's forecast to メニュー未入力 = 0円 (no day is closed)")
     a = ap.parse_args()
     os.umask(0o077)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
@@ -492,6 +593,11 @@ def main():
         for lbl, (old, new) in changed.items():
             print(f"repaired {lbl}: 売れた施術 {old['trTot']} → {new['trTot']}; 施術数/人 {old['kpi'].get('tpp')} → {new['kpi'].get('tpp')}, "
                   f"2施術以上 {old['kpi'].get('multi')} → {new['kpi'].get('multi')}")
+        return
+    if a.restate_nomenu:
+        out, done, c = restate_nomenu_page(html, Raw(a.work), today)
+        open(a.out, 'w', encoding='utf-8').write(out)
+        print(f"restated (メニュー未入力 = 0円): {', '.join(done) or 'nothing'}; 本日{c['TODAY']['date']}の予想 {c['TODAY']['cur']:,}円")
         return
     if a.intraday:
         now = dt.datetime.now(JST).strftime('%H:%M')

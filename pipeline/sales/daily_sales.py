@@ -127,6 +127,20 @@ def landing_intraday(deploy, today=None):
         print('built and checked (not deployed):', os.path.join(w, 'new.html'))
 
 
+def landing_restate_nomenu(deploy, today=None):
+    """Once: restate naaclinic's days from 11/1 and today's forecast to メニュー未入力 = 0円 (no day is closed)."""
+    w = os.path.join(BASE, 'landing')
+    code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), '--restate-nomenu', *(['--today', today] if today else []),
+               env=dict(os.environ, WORK=w))
+    if code:
+        sys.exit('STOP landing (restate-nomenu): nothing deployed')
+    if deploy:
+        netlify.deploy('naaclinic', os.path.join(w, 'new.html'), 'メニュー未入力を0円で再計算（11/1〜）', require_password=False)
+        print('DONE landing (restate-nomenu): https://naaclinic.netlify.app')
+    else:
+        print('built and checked (not deployed):', os.path.join(w, 'new.html'))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only', choices=['counselor', 'landing', 'nurse'])
@@ -136,10 +150,14 @@ def main():
     ap.add_argument('--summary', help='landing: summary_todo.json with the 月まとめ sentences written (after exit 4)')
     ap.add_argument('--accept-closed-month-changes', action='store_true',
                     help='nurse only, once: the first build from the API replaces the Excel-export page (numbers change slightly)')
+    ap.add_argument('--restate-nomenu', action='store_true',
+                    help='landing only, once: restate the days from 11/1 and today\'s forecast to メニュー未入力 = 0円, then deploy')
     a = ap.parse_args()
     os.umask(0o077)
     if a.intraday:
         return landing_intraday(not a.no_deploy, a.today)
+    if a.restate_nomenu:
+        return landing_restate_nomenu(not a.no_deploy, a.today)
     for name in ([a.only] if a.only else ENABLED):
         if name == 'landing':
             landing(not a.no_deploy, a.summary, a.today)

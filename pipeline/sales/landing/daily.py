@@ -68,6 +68,34 @@ def intraday(a):
     print('READY (intraday): $WORK/new.html')
 
 
+def restate_nomenu(a):
+    """Once, after the メニュー未入力 = 0円 decision: download the live page, fetch the month so far, restate the
+    published days from config.NOMENU_ZERO_FROM and today's forecast (build.py --restate-nomenu), verify, render check."""
+    os.makedirs(WORK, exist_ok=True)
+    os.chmod(WORK, 0o700)
+    today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
+    cur, new = os.path.join(WORK, 'current.html'), os.path.join(WORK, 'new.html')
+    if a.html:
+        shutil.copy(a.html, cur)
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+        import netlify
+        netlify.download(config.SITE, cur)
+    if page.get_consts(open(cur, encoding='utf-8').read())['TODAY']['date'] != f'{today.month}/{today.day}':
+        sys.exit(f'STOP: the live page has no forecast for {today}; let the 0:30 run make it first')
+    first = min(config.NOMENU_ZERO_FROM, today.replace(day=1))
+    if py('fetch.py', '--from', first, '--to', today, '--work', WORK):
+        sys.exit('STOP: fetching KOS data failed; nothing built')
+    if py('build.py', '--restate-nomenu', '--html', cur, '--work', WORK, '--out', new, '--today', today):
+        sys.exit(1)
+    if py('verify.py', '--html', new, '--work', WORK, '--json', os.path.join(WORK, 'verify.json')):
+        sys.exit('STOP: verify.py found a FATAL difference; not ready to publish')
+    npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
+    if subprocess.run(['node', os.path.join(HERE, 'check_render.js'), new], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
+        sys.exit('STOP: the page does not render cleanly; not ready to publish')
+    print('READY (restate-nomenu): $WORK/new.html')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--today', help='JST date of the new day (default: today in JST)')
@@ -75,10 +103,13 @@ def main():
     ap.add_argument('--summary', help='$WORK/summary_todo.json after its "text" was written: makes the 月まとめ tab')
     ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday, for tests: replay this time of a finished day')
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only today\'s results (no forecast change)')
+    ap.add_argument('--restate-nomenu', action='store_true', help='once: restate the published days and today\'s forecast to メニュー未入力 = 0円')
     a = ap.parse_args()
     os.umask(0o077)
     if a.intraday:
         return intraday(a)
+    if a.restate_nomenu:
+        return restate_nomenu(a)
     os.makedirs(WORK, exist_ok=True)
     os.chmod(WORK, 0o700)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()

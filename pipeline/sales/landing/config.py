@@ -30,11 +30,12 @@ def rate(d):
 # made before 0:00 that actually came (same-day cancellations left out). The forecast published at 0:00 is kept as Am0.
 MORNING_VISITORS_FROM = __import__('datetime').date(2026, 11, 1)
 
-# From 2026-11-17 (owner's decision 2026-11-16) a reservation without a menu (予約金額0) counts 0円 in every forecast
+# From 2026-11-01 (owner's decision 2026-11-16) a reservation without a menu (予約金額0) counts 0円 in every forecast
 # (朝の予想・当日基準・総予約数基準・補正ロジック・日中の着地見込み) instead of the average 予約単価 / the previous
 # month's 補完単価. The closed day's waterfall step 「未入力の補完」 becomes 「未入力の決済」 (what those visits paid).
-# Days before NOMENU_ZERO_FROM keep the forecast that was published for them.
-NOMENU_ZERO_FROM = __import__('datetime').date(2026, 11, 17)
+# Days from 11/1 published before the decision are restated once (build.restate_nomenu); the 0:00 forecast actually
+# published (Am0, TARGET.morning) stays as it was. Days before NOMENU_ZERO_FROM keep the forecast published for them.
+NOMENU_ZERO_FROM = __import__('datetime').date(2026, 11, 1)
 
 
 def nomenu_zero(d):
