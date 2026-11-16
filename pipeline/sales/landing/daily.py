@@ -83,7 +83,8 @@ def restate_nomenu(a):
         netlify.download(config.SITE, cur)
     if page.get_consts(open(cur, encoding='utf-8').read())['TODAY']['date'] != f'{today.month}/{today.day}':
         sys.exit(f'STOP: the live page has no forecast for {today}; let the 0:30 run make it first')
-    first = min(config.NOMENU_ZERO_FROM, today.replace(day=1))
+    # the previous (reference) month too: verify.py re-checks its 決済ベース total and MONTH
+    first = min(config.NOMENU_ZERO_FROM, (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1))
     if py('fetch.py', '--from', first, '--to', today, '--work', WORK):
         sys.exit('STOP: fetching KOS data failed; nothing built')
     if py('build.py', '--restate-nomenu', '--html', cur, '--work', WORK, '--out', new, '--today', today):
