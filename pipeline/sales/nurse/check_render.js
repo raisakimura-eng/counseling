@@ -131,6 +131,21 @@ function diff(where, got, exp, errs) {
       }
     }
     if (pts.length && !(await page.$$eval('#board tbody tr.sel', r => r.length === 0))) errs.push('scatter click left a row selected');
+    // タブ: 「施術時間（目安）」で施術別の表だけが出て、スコアボードが隠れる。戻すと元どおり
+    await page.click('#tabBar button[data-t="dur"]');
+    const tabDur = await page.evaluate(() => ({ dur: !document.getElementById('tabDur').hidden && document.querySelectorAll('#mdur tbody tr').length,
+      board: !document.getElementById('board').closest('section').hidden }));
+    if (!tabDur.dur || tabDur.board) errs.push(`施術時間タブ: 表 ${tabDur.dur} / スコアボード表示 ${tabDur.board}`);
+    await scan(page, 'tab dur', errs);
+    for (const d of ['2026-11', ...days.filter(x => x && x.length === 10).slice(-1)]) {
+      if (!d || !(await page.$(`#dayBar button[data-d="${d}"]`))) continue;
+      await page.click(`#dayBar button[data-d="${d}"]`);
+      await scan(page, `tab dur ${d}`, errs);
+    }
+    await page.click('#dayBar button[data-d=""]');
+    await page.click('#tabBar button[data-t="board"]');
+    if (await page.evaluate(() => !document.getElementById('tabDur').hidden || document.getElementById('board').closest('section').hidden))
+      errs.push('スコアボードのタブに戻らない');
     await page.click('#loadBtn');
     if (await page.$eval('#drop', e => e.hidden)) errs.push('Excel drop area did not open');
     await page.click('#loadBtn');

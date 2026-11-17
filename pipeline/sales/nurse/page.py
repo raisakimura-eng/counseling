@@ -345,13 +345,28 @@ def migrate_months(html):
 DUR_NOTE = ('        <p><b>施術時間（目安）</b>：1件あたりの所要時間の中央値。KOS に施術の開始時刻が無いため、'
             '「施術者の割当（同じ来院で前の施術があればその完了）」から「完了」までの時間で代用。'
             '入力の遅れなどで実際の施術時間とはずれるので、看護師間の比較の目安として見る。'
-            '0分以下・120分超は除外。n は計算できた件数。施術別の表は同じメニューどうしの比較（3件未満は「–」）。</p>\n')
+            '0分以下・120分超は除外。n は計算できた件数。施術別の表は「施術時間（目安）」のタブ（同じメニューどうしの比較、3件未満は「–」）。</p>\n')
 MENU_TOP, MENU_MIN = 15, 3   # 施術別の表: 計算できた件数の多いメニュー上位15、マスは3件以上で表示
-MENU_HTML = ('  <section class="panel">\n'
+MENU_HTML = ('  <section class="panel" id="tabDur" hidden>\n'
              '    <div class="sec-head"><h2>施術別の施術時間（目安）</h2>'
              '<p>看護師が施術者のメニュー（計算できた件数の多い上位15）。各マスは中央値、3件未満は「–」。同じメニューの中で濃いほど長い</p></div>\n'
              '    <div class="scroll" id="mdur"></div>\n'
+             '    <p class="sub" style="margin:10px 0 0">施術時間（目安）：KOS に施術の開始時刻が無いため、「施術者の割当（同じ来院で前の施術があればその完了）」'
+             'から「完了」までの時間の中央値。0分以下・120分超は除外。入力の遅れで実際の時間とはずれるので、同じメニューの中での比較の目安として見る。'
+             '期間は上の「全期間・月・日」のボタンと共通。スコアボードで看護師を選ぶと、その看護師の列が強調される。</p>\n'
              '  </section>\n')
+# タブ（2026-11-18、オーナーの依頼）: 「スコアボード」と「施術時間（目安）」。施術別の表は「施術時間（目安）」のタブだけに出す。
+# .wrap の直下の section を切り替える（id="tabDur" だけが施術時間のタブ、ほかはスコアボード）。期間・VOC のボタンは共通。
+TAB_HTML = ('  <div class="seg tabs" role="tablist" aria-label="表示の切り替え" id="tabBar">'
+            '<button type="button" role="tab" data-t="board" aria-selected="true" aria-pressed="true">スコアボード</button>'
+            '<button type="button" role="tab" data-t="dur" aria-selected="false" aria-pressed="false">施術時間（目安）</button></div>\n')
+TAB_CSS = '.seg.tabs{justify-self:start}.seg.tabs button{padding:8px 18px;font-size:13.5px}'
+TAB_JS = ("// タブ: スコアボード／施術時間（目安）。期間のボタンは共通\n"
+          "let tab='board';\n"
+          "function setTab(t){ tab=t; document.querySelectorAll('#tabBar button').forEach(b=>{const on=b.dataset.t===t;"
+          " b.setAttribute('aria-pressed',on); b.setAttribute('aria-selected',on);});"
+          " document.querySelectorAll('.wrap > section').forEach(s=>s.hidden=(t==='dur')!==(s.id==='tabDur')); }\n"
+          "document.querySelectorAll('#tabBar button').forEach(b=>b.onclick=()=>setTab(b.dataset.t));\n")
 MENU_FN = (
     "// 施術別の施術時間（目安）: 行＝メニュー（全体の件数の多い順）、列＝全体と看護師（施術件数の多い順）\n"
     "function menuTable(rows){\n"
@@ -393,6 +408,11 @@ DUR_JS = [
      "      <td class=\"r num\">${r.assist||'–'}</td>\n"
      "      <td class=\"r\"><span class=\"num\">${r.dur==null?'–':Math.round(r.dur/60)+'分'}</span> <span class=\"sub\">n=${r.dn}</span></td>\n"),
     ("        <p id=\"excl\"></p>", DUR_NOTE + "        <p id=\"excl\"></p>"),
+    ('  <section class="tiles" id="tiles" aria-label="サマリー"></section>',
+     TAB_HTML + '  <section class="tiles" id="tiles" aria-label="サマリー"></section>'),
+    ("$('loadBtn').onclick=()=>{$('drop').hidden=!$('drop').hidden;};\n",
+     "$('loadBtn').onclick=()=>{$('drop').hidden=!$('drop').hidden;};\n" + TAB_JS),
+    ('</style>', TAB_CSS + '\n</style>'),
 ]
 DUR_MARK = 'const med = xs =>'
 
