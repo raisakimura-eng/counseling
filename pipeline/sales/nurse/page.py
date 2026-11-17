@@ -131,7 +131,7 @@ class Calc:
         def get(n):
             if n not in roster:
                 roster[n] = dict(name=n, cnt=0, visits=set(), assist=0, days={}, cats={}, nomFix=0, nomEst=0, inTreat=False,
-                                 durs=[])
+                                 durs=[], idur={})
             return roster[n]
         for l in proc:
             for n in [p for p in l['perf'] if not self.is_doctor(p) and not self.is_non_staff(p)]:
@@ -144,6 +144,11 @@ class Calc:
                 o['cats'][c] = o['cats'].get(c, 0) + 1
                 if l['dur'] is not None:
                     o['durs'].append(l['dur'])
+                    o['idur'].setdefault(l['item'], []).append(l['dur'])
+        menu_dur = {}
+        for l in proc:
+            if l['dur'] is not None and any(p in roster for p in l['perf']):
+                menu_dur.setdefault(l['item'], []).append(l['dur'])
         for l in proc:
             if l['tanto'] and l['tanto'] not in l['perf'] and any(map(self.is_doctor, l['perf'])) and l['tanto'] in roster:
                 roster[l['tanto']]['assist'] += 1
@@ -199,7 +204,7 @@ class Calc:
                 resp[k]['text'] = val
         resp_list = [x for x in resp.values() if x.get('score') is not None or x.get('text')]
         return dict(proc=proc, dates=dates, roster=roster, resp=resp_list, shine=shine, p0=p0, p1=p1, day=day,
-                    isM=is_m, ndays=len(sel) if is_m else None,
+                    isM=is_m, ndays=len(sel) if is_m else None, menuDur=menu_dur,
                     est_unassigned=est_unassigned, pDates={v['d'] for v in visits.values()},
                     sDates={dstr(r[0]) for r in D['S']})
 
@@ -231,7 +236,8 @@ class Calc:
                              nomFix=o['nomFix'], nomEst=o['nomEst'], nom=nom, rate=nom / nv if nv else None, avg=avg,
                              n=len(sc), low=sum(1 for s in sc if s <= 3), st=st, ment=ment,
                              comments=sorted([(v.get('score'), v['d'] or '', str(v['text'])) for v in comments], key=str),
-                             inTreat=o['inTreat'], dur=median(o.get('durs', [])), dn=len(o.get('durs', []))))
+                             inTreat=o['inTreat'], dur=median(o.get('durs', [])), dn=len(o.get('durs', [])),
+                             idur={k: (median(v) if len(v) >= MENU_MIN else None, len(v)) for k, v in o.get('idur', {}).items()}))
         return [r for r in rows if r['inTreat'] or r['n'] > 0]
 
     def tiles(self, C, rows, call):
@@ -251,7 +257,7 @@ class Calc:
                     flagged=sorted(r['name'] for r in rows if r['st'] in ('crit', 'warn')),
                     gapP=[d for d in call['dates'] if d not in call['pDates']],
                     gapS=[d for d in call['dates'] if d not in call['sDates']],
-                    unassigned=C['est_unassigned'], noS=no_s)
+                    unassigned=C['est_unassigned'], noS=no_s, menus=menu_table(C, treat))
 
 
 def median(xs):
@@ -265,6 +271,13 @@ def median(xs):
 def minutes(sec):
     """画面の表示（JS の Math.round(sec/60)+'分'）。"""
     return '–' if sec is None else f'{math.floor(sec / 60 + 0.5)}分'
+
+
+def menu_table(C, treat):
+    """施術別の表（JS の menuTable()）: [(メニュー, 全体の中央値, 件数, {看護師: (中央値 or None, 件数)})]。"""
+    M = C.get('menuDur', {})
+    menus = sorted((k for k, v in M.items() if len(v) >= MENU_MIN), key=lambda k: (-len(M[k]), k))[:MENU_TOP]
+    return [(m, median(M[m]), len(M[m]), {r['name']: r['idur'][m] for r in treat if m in r['idur']}) for m in menus]
 
 
 def to_fixed2(v):
@@ -332,15 +345,45 @@ def migrate_months(html):
 DUR_NOTE = ('        <p><b>施術時間（目安）</b>：1件あたりの所要時間の中央値。KOS に施術の開始時刻が無いため、'
             '「施術者の割当（同じ来院で前の施術があればその完了）」から「完了」までの時間で代用。'
             '入力の遅れなどで実際の施術時間とはずれるので、看護師間の比較の目安として見る。'
-            '0分以下・120分超は除外。n は計算できた件数。</p>\n')
+            '0分以下・120分超は除外。n は計算できた件数。施術別の表は同じメニューどうしの比較（3件未満は「–」）。</p>\n')
+MENU_TOP, MENU_MIN = 15, 3   # 施術別の表: 計算できた件数の多いメニュー上位15、マスは3件以上で表示
+MENU_HTML = ('  <section class="panel">\n'
+             '    <div class="sec-head"><h2>施術別の施術時間（目安）</h2>'
+             '<p>看護師が施術者のメニュー（計算できた件数の多い上位15）。各マスは中央値、3件未満は「–」。同じメニューの中で濃いほど長い</p></div>\n'
+             '    <div class="scroll" id="mdur"></div>\n'
+             '  </section>\n')
+MENU_FN = (
+    "// 施術別の施術時間（目安）: 行＝メニュー（全体の件数の多い順）、列＝全体と看護師（施術件数の多い順）\n"
+    "function menuTable(rows){\n"
+    "  const M=C.menuDur||{}, mins=s=>Math.round(s/60)+'分';\n"
+    "  const menus=Object.keys(M).filter(k=>M[k].length>=3).sort((a,b)=>M[b].length-M[a].length||(a<b?-1:a>b?1:0)).slice(0,15);\n"
+    "  const ns=[...rows].sort((a,b)=>b.cnt-a.cnt);\n"
+    "  if(!menus.length){ $('mdur').innerHTML='<p class=\"sub\">この期間は計算できる施術がありません</p>'; return; }\n"
+    "  $('mdur').innerHTML=`<table class=\"heat\"><thead><tr><th>施術メニュー</th><th>全体</th>${ns.map(r=>`<th${selected===r.name?' style=\"color:var(--accent);font-weight:700\"':''}>${esc(r.name)}</th>`).join('')}</tr></thead><tbody>${\n"
+    "    menus.map(m=>{ const all=med(M[m]); const cells=ns.map(r=>{ const xs=(r.idur||{})[m]||[]; return xs.length>=3?med(xs):(xs.length?-1:null); });\n"
+    "      const hi=Math.max(all,...cells.filter(v=>v>0)), lo=Math.min(all,...cells.filter(v=>v>0)), a=v=>hi>lo?(v-lo)/(hi-lo):0;\n"
+    "      return `<tr><td class=\"name\" title=\"${esc(m)}\" style=\"max-width:240px;overflow:hidden;text-overflow:ellipsis\">${esc(m)}</td><td class=\"num\" style=\"background:var(--surface-2)\"><b>${mins(all)}</b> <span class=\"sub\">n=${M[m].length}</span></td>${cells.map((v,i)=>{ const dim=selected&&selected!==ns[i].name?'opacity:.35;':''; const n=((ns[i].idur||{})[m]||[]).length;\n"
+    "        return v==null?`<td style=\"${dim}\"></td>`:v<0?`<td class=\"num sub\" style=\"${dim}\" title=\"n=${n}\">–</td>`:`<td class=\"num\" title=\"n=${n}\" style=\"${dim}background:color-mix(in srgb, var(--bar) ${Math.round(10+a(v)*70)}%, var(--surface-2))\">${mins(v)}</td>`; }).join('')}</tr>`; }).join('')\n"
+    "  }</tbody></table>`;\n"
+    "}\n")
 DUR_JS = [
     ("    const [g,cat,item,tanto,couns]=r;", "    const [g,cat,item,tanto,couns,dur]=r;"),
     ("cat, item, tanto:canon(tanto)});", "cat, item, tanto:canon(tanto), dur:typeof dur==='number'?dur:null});"),
     ("nomFix:0,nomEst:0,scores:[],comments:[],mentions:0,inTreat:false}); return roster.get(n); };",
-     "nomFix:0,nomEst:0,scores:[],comments:[],mentions:0,inTreat:false,durs:[]}); return roster.get(n); };"),
-    ("o.cats[c]=(o.cats[c]||0)+1; }", "o.cats[c]=(o.cats[c]||0)+1; if(l.dur!=null) o.durs.push(l.dur); }"),
+     "nomFix:0,nomEst:0,scores:[],comments:[],mentions:0,inTreat:false,durs:[],idur:{}}); return roster.get(n); };"),
+    ("o.cats[c]=(o.cats[c]||0)+1; }",
+     "o.cats[c]=(o.cats[c]||0)+1; if(l.dur!=null){ o.durs.push(l.dur); (o.idur[l.item]=o.idur[l.item]||[]).push(l.dur); } }"),
+    ("  for(const l of proc){ if(l.tanto ",
+     "  // 施術別の施術時間（目安）: 看護師が施術者のメニューごと（1件は1回だけ数える）\n"
+     "  const menuDur={}; for(const l of proc){ if(l.dur!=null && l.perf.some(p=>roster.has(p))) (menuDur[l.item]=menuDur[l.item]||[]).push(l.dur); }\n"
+     "  for(const l of proc){ if(l.tanto "),
+    ("estUnassigned,nurseSet,pDates,sDates};", "estUnassigned,nurseSet,pDates,sDates,menuDur};"),
     ("days:{},cats:{},nomFix:0,nomEst:0,inTreat:false};", "days:{},cats:{},nomFix:0,nomEst:0,inTreat:false,durs:[]};"),
-    ("ment,comments,inTreat:o.inTreat});", "ment,comments,inTreat:o.inTreat,dur:med(o.durs||[]),dn:(o.durs||[]).length});"),
+    ("ment,comments,inTreat:o.inTreat});", "ment,comments,inTreat:o.inTreat,dur:med(o.durs||[]),dn:(o.durs||[]).length,idur:o.idur||{}});"),
+    ("  heat('cats',treat,topCats,r=>c=>r.cats[c]||0,c=>c);\n", "  heat('cats',treat,topCats,r=>c=>r.cats[c]||0,c=>c);\n  menuTable(treat);\n"),
+    ("function heat(id,rows,cols,getter,lab,hl=null){", MENU_FN + "function heat(id,rows,cols,getter,lab,hl=null){"),
+    ("    <div class=\"scroll\" id=\"cats\"></div>\n  </section>\n",
+     "    <div class=\"scroll\" id=\"cats\"></div>\n  </section>\n\n" + MENU_HTML),
     ("function build(C, vocMode){",
      "// 中央値（施術時間の目安）。偶数個は真ん中2つの平均\n"
      "const med = xs => { if(!xs.length) return null; const s=[...xs].sort((a,b)=>a-b), k=s.length>>1; return s.length%2?s[k]:(s[k-1]+s[k])/2; };\n"

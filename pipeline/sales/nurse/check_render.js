@@ -33,6 +33,12 @@ async function screen(page) {
     board: Object.fromEntries([...document.querySelectorAll('#board tbody tr')].map(tr =>
       [tr.dataset.n, [...tr.querySelectorAll('td')].slice(1).map((td, i) =>
         i === 4 ? (td.querySelector('.num') || td).textContent.trim() : td.innerText.replace(/\s+/g, ' ').trim())])),
+    // 施術別の施術時間: メニュー → {列見出し: マスの文字}（空のマスは除く）
+    menus: Object.fromEntries([...document.querySelectorAll('#mdur tbody tr')].map(tr => {
+      const hs = [...document.querySelectorAll('#mdur thead th')].map(th => th.textContent.trim());
+      const td = [...tr.querySelectorAll('td')];
+      return [td[0].textContent.trim(), Object.fromEntries(td.slice(1).map((c, i) => [hs[i + 1], c.innerText.replace(/\s+/g, ' ').trim()]).filter(x => x[1]))];
+    })),
     comments: +(document.getElementById('vocSub').textContent.match(/^(\d+)件/) || [0, -1])[1],
   }));
 }
@@ -43,6 +49,14 @@ function diff(where, got, exp, errs) {
   for (const n of names) {
     const a = got.board[n], b = exp.board[n];
     if (JSON.stringify(a) !== JSON.stringify(b)) errs.push(`${where}: ${n} ${JSON.stringify(a)} != expected ${JSON.stringify(b)}`);
+  }
+  const srt = o => o && JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));   // 列の並びは比べない（値だけ）
+  if (JSON.stringify(Object.keys(got.menus)) !== JSON.stringify(Object.keys(exp.menus)) ||
+      Object.keys(got.menus).some(m => srt(got.menus[m]) !== srt(exp.menus[m]))) {
+    const ms = new Set([...Object.keys(got.menus), ...Object.keys(exp.menus)]);
+    for (const m of ms) if (srt(got.menus[m]) !== srt(exp.menus[m]))
+      errs.push(`${where}: 施術別 ${m} ${JSON.stringify(got.menus[m])} != expected ${JSON.stringify(exp.menus[m])}`);
+    if (JSON.stringify(Object.keys(got.menus)) !== JSON.stringify(Object.keys(exp.menus))) errs.push(`${where}: 施術別の並び ${Object.keys(got.menus)} != ${Object.keys(exp.menus)}`);
   }
   if (got.comments !== exp.comments) errs.push(`${where}: VOC comments ${got.comments} != expected ${exp.comments}`);
 }

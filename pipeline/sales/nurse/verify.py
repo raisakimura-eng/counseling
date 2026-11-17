@@ -29,8 +29,8 @@ import aggregate as A  # noqa: E402
 import fetch  # noqa: E402
 import page  # noqa: E402
 
-ROW_KEYS = ['cnt', 'pts', 'assist', 'nomFix', 'nomEst', 'avg', 'n', 'low', 'st', 'ment', 'comments', 'days', 'cats', 'dur', 'dn']
-TILE_KEYS = ['period', 'nurses', 'cnt', 'pts', 'nom', 'nomFix', 'nomEst', 'rate', 'voc', 'voc_n', 'flagged', 'gapP', 'gapS', 'unassigned']
+ROW_KEYS = ['cnt', 'pts', 'assist', 'nomFix', 'nomEst', 'avg', 'n', 'low', 'st', 'ment', 'comments', 'days', 'cats', 'dur', 'dn', 'idur']
+TILE_KEYS = ['period', 'nurses', 'cnt', 'pts', 'nom', 'nomFix', 'nomEst', 'rate', 'voc', 'voc_n', 'flagged', 'gapP', 'gapS', 'unassigned', 'menus']
 
 
 def page_period(e):
@@ -142,7 +142,11 @@ def expect(views):
                      str(r['nom'] or '–'),
                      '–' if no_p else pct(r['rate']), f"{fmt1(r['avg'])} n={r['n']}", str(r['low'] or '–'),
                      str(r['ment'] or '–'), lab[r['st']] + (' n少' if 0 < r['n'] < 3 else '')] for n, r in rows.items()}
-        out[f'{day}|{mode}'] = dict(tiles=tiles, board=board, comments=sum(len(r['comments']) for r in rows.values()))
+        menus = {m: dict({'全体': f"{page.minutes(a)} n={n}"},
+                         **{k: page.minutes(v) if v is not None else '–' for k, (v, _) in cells.items()})
+                 for m, a, n, cells in t['menus']}
+        out[f'{day}|{mode}'] = dict(tiles=tiles, board=board, menus=menus,
+                                    comments=sum(len(r['comments']) for r in rows.values()))
     return out
 
 
