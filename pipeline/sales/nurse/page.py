@@ -7,6 +7,7 @@ compute() / board() は JS の compute() / build() / render() の数値部分を
 JS を変えたらここも合わせる（check_render.js が Chromium の表示とこの再現を突き合わせる）。
 """
 import decimal
+import math
 import json
 import re
 
@@ -104,7 +105,8 @@ class Calc:
     def compute(self, D, day=None):
         path, leaves = [], []
         for r in D['T']:
-            g, cat, item, tanto, couns = r
+            g, cat, item, tanto, couns = r[:5]
+            dur = r[5] if len(r) > 5 and isinstance(r[5], (int, float)) and not isinstance(r[5], bool) else None
             if isinstance(g, str) and '->' in g:
                 path = [s.strip() for s in g.split('->')[1:]]
                 continue
@@ -115,7 +117,7 @@ class Calc:
                 continue
             leaves.append(dict(perf=[x for x in map(self.canon, (path[di - 1] or '').split(',')) if x],
                                date=dstr(path[di]), pt=norm(path[di + 1] if di + 1 < len(path) else None),
-                               cat=cat, item=item, tanto=self.canon(tanto)))
+                               cat=cat, item=item, tanto=self.canon(tanto), dur=dur))
         proc = [l for l in leaves if l['item'] is not None]
         dates = sorted({l['date'] for l in proc if l['date']})
         is_m = bool(day) and len(day) == 7   # 'YYYY-MM' = 月の表示
@@ -128,7 +130,8 @@ class Calc:
 
         def get(n):
             if n not in roster:
-                roster[n] = dict(name=n, cnt=0, visits=set(), assist=0, days={}, cats={}, nomFix=0, nomEst=0, inTreat=False)
+                roster[n] = dict(name=n, cnt=0, visits=set(), assist=0, days={}, cats={}, nomFix=0, nomEst=0, inTreat=False,
+                                 durs=[])
             return roster[n]
         for l in proc:
             for n in [p for p in l['perf'] if not self.is_doctor(p) and not self.is_non_staff(p)]:
@@ -139,6 +142,8 @@ class Calc:
                 o['days'][l['date']] = o['days'].get(l['date'], 0) + 1
                 c = (l['cat'] or '未分類').split(',')[-1]
                 o['cats'][c] = o['cats'].get(c, 0) + 1
+                if l['dur'] is not None:
+                    o['durs'].append(l['dur'])
         for l in proc:
             if l['tanto'] and l['tanto'] not in l['perf'] and any(map(self.is_doctor, l['perf'])) and l['tanto'] in roster:
                 roster[l['tanto']]['assist'] += 1
@@ -206,7 +211,8 @@ class Calc:
         names = list(dict.fromkeys(list(C['roster']) + [r['n'] for r in vocs]))
         rows = []
         for n in names:
-            o = C['roster'].get(n) or dict(cnt=0, visits=set(), assist=0, days={}, cats={}, nomFix=0, nomEst=0, inTreat=False)
+            o = C['roster'].get(n) or dict(cnt=0, visits=set(), assist=0, days={}, cats={}, nomFix=0, nomEst=0, inTreat=False,
+                                           durs=[])
             mine = [v for v in vocs if v['n'] == n]
             sc = [v['score'] for v in mine if v.get('score') is not None]
             avg = sum(sc) / len(sc) if sc else None
@@ -225,7 +231,7 @@ class Calc:
                              nomFix=o['nomFix'], nomEst=o['nomEst'], nom=nom, rate=nom / nv if nv else None, avg=avg,
                              n=len(sc), low=sum(1 for s in sc if s <= 3), st=st, ment=ment,
                              comments=sorted([(v.get('score'), v['d'] or '', str(v['text'])) for v in comments], key=str),
-                             inTreat=o['inTreat']))
+                             inTreat=o['inTreat'], dur=median(o.get('durs', [])), dn=len(o.get('durs', []))))
         return [r for r in rows if r['inTreat'] or r['n'] > 0]
 
     def tiles(self, C, rows, call):
@@ -246,6 +252,19 @@ class Calc:
                     gapP=[d for d in call['dates'] if d not in call['pDates']],
                     gapS=[d for d in call['dates'] if d not in call['sDates']],
                     unassigned=C['est_unassigned'], noS=no_s)
+
+
+def median(xs):
+    """JS の med() と同じ（偶数個は真ん中2つの平均。秒の整数なので丸めの差は出ない）。"""
+    if not xs:
+        return None
+    s, k = sorted(xs), len(xs) // 2
+    return s[k] if len(xs) % 2 else (s[k - 1] + s[k]) / 2
+
+
+def minutes(sec):
+    """画面の表示（JS の Math.round(sec/60)+'分'）。"""
+    return '–' if sec is None else f'{math.floor(sec / 60 + 0.5)}分'
 
 
 def to_fixed2(v):
@@ -304,6 +323,44 @@ def migrate_months(html):
     for old, new in MONTH_JS:
         if html.count(old) != 1:
             raise SystemExit(f'STOP: the page JS is not what migrate_months expects: {old[:60]!r}')
+        html = html.replace(old, new)
+    return html
+
+
+# 施術時間の目安（2026-11-17、オーナーの依頼）: 看護師別の表に「施術時間（目安）」の列を足す。
+# T の明細の6列目（秒。aggregate.durations）の中央値。Excel 版の行には無いので「–」。何度かけても同じ。
+DUR_NOTE = ('        <p><b>施術時間（目安）</b>：1件あたりの所要時間の中央値。KOS に施術の開始時刻が無いため、'
+            '「施術者の割当（同じ来院で前の施術があればその完了）」から「完了」までの時間で代用。'
+            '入力の遅れなどで実際の施術時間とはずれるので、看護師間の比較の目安として見る。'
+            '0分以下・120分超は除外。n は計算できた件数。</p>\n')
+DUR_JS = [
+    ("    const [g,cat,item,tanto,couns]=r;", "    const [g,cat,item,tanto,couns,dur]=r;"),
+    ("cat, item, tanto:canon(tanto)});", "cat, item, tanto:canon(tanto), dur:typeof dur==='number'?dur:null});"),
+    ("nomFix:0,nomEst:0,scores:[],comments:[],mentions:0,inTreat:false}); return roster.get(n); };",
+     "nomFix:0,nomEst:0,scores:[],comments:[],mentions:0,inTreat:false,durs:[]}); return roster.get(n); };"),
+    ("o.cats[c]=(o.cats[c]||0)+1; }", "o.cats[c]=(o.cats[c]||0)+1; if(l.dur!=null) o.durs.push(l.dur); }"),
+    ("days:{},cats:{},nomFix:0,nomEst:0,inTreat:false};", "days:{},cats:{},nomFix:0,nomEst:0,inTreat:false,durs:[]};"),
+    ("ment,comments,inTreat:o.inTreat});", "ment,comments,inTreat:o.inTreat,dur:med(o.durs||[]),dn:(o.durs||[]).length});"),
+    ("function build(C, vocMode){",
+     "// 中央値（施術時間の目安）。偶数個は真ん中2つの平均\n"
+     "const med = xs => { if(!xs.length) return null; const s=[...xs].sort((a,b)=>a-b), k=s.length>>1; return s.length%2?s[k]:(s[k-1]+s[k])/2; };\n"
+     "function build(C, vocMode){"),
+    ("['assist','医師施術の担当','r'],", "['assist','医師施術の担当','r'],['dur','施術時間（目安）','r'],"),
+    ("      <td class=\"r num\">${r.assist||'–'}</td>\n",
+     "      <td class=\"r num\">${r.assist||'–'}</td>\n"
+     "      <td class=\"r\"><span class=\"num\">${r.dur==null?'–':Math.round(r.dur/60)+'分'}</span> <span class=\"sub\">n=${r.dn}</span></td>\n"),
+    ("        <p id=\"excl\"></p>", DUR_NOTE + "        <p id=\"excl\"></p>"),
+]
+DUR_MARK = 'const med = xs =>'
+
+
+def migrate_duration(html):
+    """公開中のページに「施術時間（目安）」の列を足す（済んでいれば何もしない）。"""
+    if DUR_MARK in html:
+        return html
+    for old, new in DUR_JS:
+        if html.count(old) != 1:
+            raise SystemExit(f'STOP: the page is not what migrate_duration expects: {old[:60]!r}')
         html = html.replace(old, new)
     return html
 

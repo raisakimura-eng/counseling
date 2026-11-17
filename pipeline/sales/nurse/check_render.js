@@ -32,7 +32,7 @@ async function screen(page) {
     tiles: [...document.querySelectorAll('#tiles .tile .v')].map(e => e.textContent.trim()),
     board: Object.fromEntries([...document.querySelectorAll('#board tbody tr')].map(tr =>
       [tr.dataset.n, [...tr.querySelectorAll('td')].slice(1).map((td, i) =>
-        i === 3 ? (td.querySelector('.num') || td).textContent.trim() : td.innerText.replace(/\s+/g, ' ').trim())])),
+        i === 4 ? (td.querySelector('.num') || td).textContent.trim() : td.innerText.replace(/\s+/g, ' ').trim())])),
     comments: +(document.getElementById('vocSub').textContent.match(/^(\d+)件/) || [0, -1])[1],
   }));
 }

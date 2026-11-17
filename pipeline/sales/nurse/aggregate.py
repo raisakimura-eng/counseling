@@ -11,6 +11,9 @@ T（施術 ≒ 施術タスク統計 get-procedure-task-statistics）
     - 施術名 = procedureName（無ければ ''）、商品名 = productTitle（ドクター診察など商品のない行は None
       → ページで除外）、商品カテゴリ = productCategoryNames を ','、担当者 = assigneeNames を ','、
       担当カウンセラー = counselorNames を ','（明細では空なら None、グループでは「データなし」）。
+    - 明細の6列目 = 施術時間の目安（秒、整数。Excel 版には無い列でページは「–」）。KOS に施術の開始時刻は無いので、
+      開始 = 施術者割当（doctorAssignedDateTimeUtc）と同じ来院（scheduleId）の前の施術の完了の遅いほう、
+      終了 = 完了（completedDateTimeUtc）。0秒以下・120分超（入力の遅れ・押し忘れ）は None。2026-11-17 オーナー依頼。
     - Excel 版は「施術名 → 施術者 → …」の並びのファイルもあった（ページはどちらも読める）。ここでは
       施術者を先頭にする並びで出す。
 P（購入 ≒ 購入項目統計 get-purchase-item-statistics、グループ行を除いた明細）
@@ -53,9 +56,30 @@ def in_range(t, d0, d1):
     return d0 <= t.date() <= d1
 
 
+DUR_MAX = 120 * 60   # 施術時間の目安の上限（秒）。これを超える・0以下は入力の遅れとみなして外す
+
+
+def durations(raw):
+    """procedureTaskId → 施術時間の目安（秒）または None。"""
+    done = {}
+    for r in raw:
+        done.setdefault(r.get('scheduleId'), []).append(jdt(r['completedDateTimeUtc']))
+    out = {}
+    for r in raw:
+        if not r.get('doctorAssignedDateTimeUtc'):
+            out[r['procedureTaskId']] = None
+            continue
+        end = jdt(r['completedDateTimeUtc'])
+        start = max([jdt(r['doctorAssignedDateTimeUtc'])] + [c for c in done[r.get('scheduleId')] if c < end])
+        sec = round((end - start).total_seconds())
+        out[r['procedureTaskId']] = sec if 0 < sec <= DUR_MAX else None
+    return out
+
+
 def t_rows(raw, d0, d1):
     """施術タスク → T（グループ行＋明細行）。"""
     recs = []
+    dur = durations(raw)
     for r in raw:
         t = jdt(r['completedDateTimeUtc'])
         if not in_range(t, d0, d1):
@@ -64,7 +88,8 @@ def t_rows(raw, d0, d1):
         recs.append((perf, t.strftime('%Y.%m.%d'), pt(r.get('visitorId')), r.get('procedureName') or '',
                      join(r.get('counselorNames')) or 'データなし', t,
                      [None, join(r.get('productCategoryNames')), r.get('productTitle') or None,
-                      join(r.get('assigneeNames')), join(r.get('counselorNames'))]))
+                      join(r.get('assigneeNames')), join(r.get('counselorNames')),
+                      dur.get(r['procedureTaskId']) if r.get('productTitle') else None]))
     recs.sort(key=lambda x: (x[0], x[1], x[2], x[3], x[4], x[5]))
     out, last = [], ()
     for perf, day, p, proc, couns, _, leaf in recs:

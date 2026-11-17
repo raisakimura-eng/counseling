@@ -216,7 +216,7 @@ def main():
     if warn and a.strict_new_staff:
         sys.exit('STOP: names that need a human decision (see WARNING lines; README「人の判断が要るもの」)')
 
-    out = page.set_config(page.set_embed(page.migrate_months(html), new), cfg)
+    out = page.set_config(page.set_embed(page.migrate_duration(page.migrate_months(html)), new), cfg)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(out)
     t = new_v[('ALL', 'same')][0]

@@ -29,7 +29,7 @@ import aggregate as A  # noqa: E402
 import fetch  # noqa: E402
 import page  # noqa: E402
 
-ROW_KEYS = ['cnt', 'pts', 'assist', 'nomFix', 'nomEst', 'avg', 'n', 'low', 'st', 'ment', 'comments', 'days', 'cats']
+ROW_KEYS = ['cnt', 'pts', 'assist', 'nomFix', 'nomEst', 'avg', 'n', 'low', 'st', 'ment', 'comments', 'days', 'cats', 'dur', 'dn']
 TILE_KEYS = ['period', 'nurses', 'cnt', 'pts', 'nom', 'nomFix', 'nomEst', 'rate', 'voc', 'voc_n', 'flagged', 'gapP', 'gapS', 'unassigned']
 
 
@@ -138,7 +138,8 @@ def expect(views):
         no_p = t['nom'] is None
         voc = '–' if (t['noS'] and mode != 'all') or t['voc'] is None else t['voc']
         tiles = [str(t['cnt']), '–' if no_p else str(t['nom']), '–' if no_p else pct(t['rate']), voc, f"{len(t['flagged'])}名"]
-        board = {n: [str(r['cnt']), str(r['pts']), str(r['assist'] or '–'), str(r['nom'] or '–'),
+        board = {n: [str(r['cnt']), str(r['pts']), str(r['assist'] or '–'), f"{page.minutes(r['dur'])} n={r['dn']}",
+                     str(r['nom'] or '–'),
                      '–' if no_p else pct(r['rate']), f"{fmt1(r['avg'])} n={r['n']}", str(r['low'] or '–'),
                      str(r['ment'] or '–'), lab[r['st']] + (' n少' if 0 < r['n'] < 3 else '')] for n, r in rows.items()}
         out[f'{day}|{mode}'] = dict(tiles=tiles, board=board, comments=sum(len(r['comments']) for r in rows.values()))
