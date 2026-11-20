@@ -404,3 +404,25 @@ def migrate_nomenu_zero(html):
             raise SystemExit(f'STOP: page changed; expected {n}× {old[:60]!r}, found {c}')
         head = head.replace(old, new)
     return head + js + tail
+
+
+HTML_EDITS_6 = [
+    # the 売上 of the target progress is the 決済ベース (owner's definition 2026-11-20), not the visits' 施術決済総額
+    ("売上は来院時の施術決済総額です（プリペイドのチャージ額は含まず、プリペイドで支払った分は含みます）。",
+     "売上は、その日に作成された決済の合計（実決済）です。スタッフ（社割後の金額）・インフルエンサー（追加施術など実際に払った分）と"
+     "プリペイドの購入を含み、プリペイドからの支払いは含みません（購入したときに計上済み）。取消・返金は処理した日に引いています。", 1),
+]
+
+
+def migrate_definitions(html):
+    """Stage 6 (idempotent): wording of the agreed 予想 / 着地 definitions (2026-11-20)."""
+    if 'その日に作成された決済の合計（実決済）です。' in html:
+        return html
+    a, b = script_bounds(html)
+    head, tail = html[:a], html[b:]
+    for old, new, n in HTML_EDITS_6:
+        c = head.count(old) + tail.count(old)
+        if c != n:
+            raise SystemExit(f'STOP: page changed; expected {n}× {old[:60]!r}, found {c}')
+        head, tail = head.replace(old, new), tail.replace(old, new)
+    return head + html[a:b] + tail

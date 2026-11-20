@@ -177,7 +177,9 @@ def gen_texts(consts, base_days_n, today, at='0:00'):
     g = consts['TARGET']
     ca = consts['TODAY']['coefAll']
     return {
-        'sub': f'（差額＝実決済 − 予約時点の予想。{rate_note(mon)}。{nomenu_note(mon)}）',
+        'sub': (f'（予想＝朝の時点の予約の希望施術メニューの金額。{rate_note(mon)}。{nomenu_note(mon)}（カウンセリングのみの予約を含む）。'
+                'スタッフ・インフルエンサーの予約は0円。実決済＝その日に作成された決済の合計。スタッフ・インフルエンサーが実際に払った分と'
+                'プリペイドの購入を含み、プリペイドからの支払いは含まない。差額＝実決済 − 予約時点の予想）'),
         'goalFoot': f'予約データのない日は、{b}月の同じ曜日の平均で見込んでいます。日割り目標は、{g["days"]}日すべて営業する前提で等分しています。',
         'cmpFoot': ('、'.join(parts) + '。') if parts else f'{c}月はまだ実績がありません。',
         'tbaseSub': f'{mon["calib"]}の実績から算出',
@@ -189,7 +191,8 @@ def gen_texts(consts, base_days_n, today, at='0:00'):
         'footPast': (f'データ：KOS OpenAPI（予約・決済・購入・施術・プリペイドの統計）から自動で集計しています（{today.month}/{today.day} {at}更新）。'
                      f'スタッフ（患者カテゴリ「NaA+HPMS」）と、インフルエンサー・PR枠（カテゴリ「インフルエンサー」ほか）の来院は、予想・客単価などの分析から除いています'
                      + (f'（{c}月：スタッフ{ex.get("staff", [0, 0])[0]}件・決済{ex.get("staff", [0, 0])[1]:,}円、インフルエンサー・PR{ex.get("influencer", [0, 0])[0]}件・決済{ex.get("influencer", [0, 0])[1]:,}円）' if ex else '')
-                     + '。ただし、これらの来院で実際に支払われた金額（自費分）は着地結果（来院ベース）に含めています。売上目標の進捗は、これらを含むクリニック全体の決済額で計算しています。'
+                     + '。着地結果（実決済）は、その日に作成された決済の合計です。これらの方が実際に支払った金額（スタッフは社割後の金額、インフルエンサーは追加施術など）と'
+                     'プリペイドの購入を含み、プリペイドからの支払いは含みません（購入したときに計上済み）。取消・返金は処理した日に引いています。売上目標の進捗も同じ金額で計算しています。'
                      + (f'予約時点の予想は、毎日8:00時点の予約から出した予想です（0:30に0:00時点の予約で仮の予想を出し、8:00時点の予約で確定します。'
                         f'{dlabel(config.MORNING_CUT_FROM - dt.timedelta(days=1))}までは0:00時点、それより前の日は予約登録日から再現）。'
                         '当日キャンセルは、8:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです'
@@ -197,7 +200,7 @@ def gen_texts(consts, base_days_n, today, at='0:00'):
                         if today >= config.MORNING_CUT_FROM else
                         '予約時点の予想は、毎日0:00時点の予約から出した予想です（それより前の日は予約登録日から再現）。当日キャンセルは、0:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです（0:00時点の記録がない日は、予約状態「ノーショー」と予約メモの記載から判定）。')
                      + '同じ日の別時間への振替は来院として数えています。売れた施術は施術実施額（施術チケット決済金額）で集計し、診察・麻酔・指名料は除いています。患者名は表示していません。'),
-        'footToday': ('データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
+        'footToday': ('データ：予想・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。着地結果（実決済）と売上目標の進捗は、これらの方が実際に払った分も含む、その日に作成された決済の合計です（プリペイドの購入を含み、プリペイドからの支払いは含みません）。'
                       f'KOS OpenAPI の予約データ（{today.month}/{today.day} {at}時点）。来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。'),
     }
 
@@ -221,7 +224,7 @@ def build(html, raw, today, targets, summary_text=None):
         mon = seed(consts)
         html = page.migrate(html, mon)
         consts['MON'] = mon
-    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html))))
+    html = page.migrate_definitions(page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html)))))
     consts.setdefault('SUMMARIES', [])
     mon = consts['MON']
     T0 = consts['TODAY']
@@ -407,7 +410,7 @@ def restate_today_nomenu(raw, consts, today):
 def restate_nomenu_page(html, raw, today):
     """--restate-nomenu: restate the closed days from config.NOMENU_ZERO_FROM and today's forecast (published before the
     0円 rule) without closing a day. Everything else stays as published."""
-    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html))))
+    html = page.migrate_definitions(page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(page.migrate_summaries(html)))))
     consts = page.get_consts(html)
     mon = consts['MON']
     done = []
@@ -483,7 +486,7 @@ def intraday(html, raw, today, now, as_of=None):
     AS_OF (aware datetime): replay an earlier hour of a finished day — the data must have been fetched up to
     that time (fetch.py --until); a reservation counts as 来院 if it was received by then."""
     from data import JST, excluded, jst, money, paid, resv, start, vtype
-    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html)))
+    html = page.migrate_definitions(page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html))))
     consts = page.get_consts(html)
     T = consts['TODAY']
     if T['date'] != dlabel(today):
@@ -563,7 +566,7 @@ def intraday(html, raw, today, now, as_of=None):
     T2 = dict(T, **new)
     now = cut
     out = page.set_consts(html, {'TODAY': T2})
-    foot = (f'データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
+    foot = (f'データ：予想・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。着地結果（実決済）と売上目標の進捗は、これらの方が実際に払った分も含む、その日に作成された決済の合計です（プリペイドの購入を含み、プリペイドからの支払いは含みません）。'
             f'KOS OpenAPI の予約データ（{today.month}/{today.day} {T.get("asof") or "0:00時点"}。現時点の決済・来院済みの件数は{now}時点のデータ）。'
             f'来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。')
     out = page.set_gen(out, {'footToday': foot})
@@ -585,7 +588,7 @@ def morning(html, raw, today):
     reservations, snapshot), TARGET's 本日 row and morning entry, the 「…時点」 of the footers. Nothing else:
     the closed days, coefficients and the month stay as the 0:30 run made them. Returns None when TODAY is already
     the 8:00 forecast."""
-    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html)))
+    html = page.migrate_definitions(page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html))))
     consts = page.get_consts(html)
     T0 = consts['TODAY']
     if T0['date'] != dlabel(today):
