@@ -1,6 +1,7 @@
 """Daily update of the 着地予想ダッシュボード (meant to run at 0:00 JST).
 
     python3 -I pipeline/sales/landing/daily.py [--today YYYY-MM-DD] [--html CURRENT.html]
+    python3 -I pipeline/sales/landing/daily.py --morning      # 8:25: today's forecast from the 8:00 reservations
     python3 -I pipeline/sales/landing/daily.py --intraday     # 12/14/16/18/20時: today's results only
 
 1. downloads the live page from Netlify (site `naaclinic`), unless --html is given
@@ -68,6 +69,39 @@ def intraday(a):
     print('READY (intraday): $WORK/new.html')
 
 
+def morning(a):
+    """8:25 (from config.MORNING_CUT_FROM): download the live page, fetch today's reservations, make today's
+    forecast again from the reservations booked before 8:00, render check. Prints NOTHING TO DO when it is done."""
+    os.makedirs(WORK, exist_ok=True)
+    os.chmod(WORK, 0o700)
+    today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()
+    w = os.path.join(WORK, 'morning')
+    cur, new = os.path.join(w, 'current.html'), os.path.join(WORK, 'new.html')
+    os.makedirs(w, exist_ok=True)
+    if a.html:
+        shutil.copy(a.html, cur)
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+        import netlify
+        netlify.download(config.SITE, cur)
+    shutil.copy(cur, os.path.join(WORK, 'current.html'))
+    T = page.get_consts(open(cur, encoding='utf-8').read())['TODAY']
+    if T['date'] != f'{today.month}/{today.day}':
+        sys.exit(f'STOP: the live page has no forecast for {today} yet (the 0:30 run did not publish); nothing to update')
+    if T.get('asof') == f'{config.morning_label(today)}時点':
+        shutil.copy(cur, new)
+        print(f'NOTHING TO DO: the page already shows the {config.morning_label(today)} forecast for {today}.')
+        return
+    if py('fetch.py', '--from', today, '--to', today, '--kinds', 'schedule', '--exact', '--work', w, '--visitors', today.strftime('%Y-%m')):
+        sys.exit('STOP: fetching KOS data failed; nothing built')
+    if py('build.py', '--morning', '--html', cur, '--work', w, '--out', new, '--today', today):
+        sys.exit(1)
+    npm_root = subprocess.run(['npm', 'root', '-g'], capture_output=True, text=True).stdout.strip()
+    if subprocess.run(['node', os.path.join(HERE, 'check_render.js'), new], env=dict(os.environ, NODE_PATH=npm_root)).returncode:
+        sys.exit('STOP: the page does not render cleanly; not ready to publish')
+    print('READY (morning): $WORK/new.html')
+
+
 def restate_nomenu(a):
     """Once, after the メニュー未入力 = 0円 decision: download the live page, fetch the month so far, restate the
     published days from config.NOMENU_ZERO_FROM and today's forecast (build.py --restate-nomenu), verify, render check."""
@@ -104,6 +138,7 @@ def main():
     ap.add_argument('--summary', help='$WORK/summary_todo.json after its "text" was written: makes the 月まとめ tab')
     ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday, for tests: replay this time of a finished day')
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only today\'s results (no forecast change)')
+    ap.add_argument('--morning', action='store_true', help='朝の更新 (8:25): today\'s forecast from the reservations booked before 8:00')
     ap.add_argument('--restate-nomenu', action='store_true', help='once: restate the published days and today\'s forecast to メニュー未入力 = 0円')
     a = ap.parse_args()
     os.umask(0o077)
@@ -111,6 +146,8 @@ def main():
         return intraday(a)
     if a.restate_nomenu:
         return restate_nomenu(a)
+    if a.morning:
+        return morning(a)
     os.makedirs(WORK, exist_ok=True)
     os.chmod(WORK, 0o700)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(JST).date()

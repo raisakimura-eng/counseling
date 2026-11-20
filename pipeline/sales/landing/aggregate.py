@@ -116,13 +116,14 @@ class Day:
         self.cancelled = [r for r in cancelled if r['visitorId'] not in live_visitors]
         self.snap = snap
         day0 = dt.datetime.combine(d, dt.time(), raw_tz())
+        cut = config.morning_cut(d)  # the reservation list the forecast is made from (0:00, from 11/21 8:00)
         if snap is not None:
             # 0:00 snapshot of the previous run: a reservation active at 0:00 and cancelled later was
             # cancelled on the day; one booked on the day and cancelled is also a same-day cancellation
             ids = set(snap)
             self.timing = {}
             for r in self.cancelled:
-                if r['scheduleId'][:8] in ids or reserved_at(r) >= day0 or r['reservationStatus'] == 'NO_SHOW':
+                if r['scheduleId'][:8] in ids or reserved_at(r) >= cut or r['reservationStatus'] == 'NO_SHOW':
                     self.timing[r['scheduleId']] = 'same'
                 else:
                     t = cancel_timing(r, d)
@@ -133,6 +134,7 @@ class Day:
         self.plan = self.visited + self.same
         self.full = self.visited + self.cancelled
         self.day0 = day0
+        self.cut = cut
         self.tasks = proc_tasks(raw, d)
         self.raw = raw
 
@@ -156,7 +158,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     A = forecast(plan, avg, d)
     low = sum(R[vtype(r)] * resv(r) for r in plan)
     Aold = forecast(full, _avg(resv(r) for r in full), d)
-    morning_rows = [r for r in plan if reserved_at(r) < x.day0]
+    morning_rows = [r for r in plan if reserved_at(r) < x.cut]
     Am = forecast(morning_rows, avg, d)
     C = sum(paid(r) for r in vis)
     resvV = sum(resv(r) for r in vis)
@@ -184,7 +186,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
     cand = [r for r in vis if resv(r) > 0 and paid(r) > 0 and paid(r) != resv(r)]
     pos = sorted([r for r in cand if paid(r) > resv(r)], key=lambda r: -(paid(r) - resv(r)))[:4]
     neg = sorted([r for r in cand if paid(r) < resv(r)], key=lambda r: paid(r) - resv(r))[:2]
-    sd_all = [r for r in plan if reserved_at(r) >= x.day0]
+    sd_all = [r for r in plan if reserved_at(r) >= x.cut]
     sd = [r for r in sd_all if r['reservationStatus'] in config.VISITED]
     lead = collections.Counter()
     for r in vis:
@@ -278,7 +280,7 @@ def day_record(raw, d, snap=None, morning=None, pay_based=True, fetched_hhmm=Non
         'AmSrc': 'snapshot' if morning is not None else 'recon',
         **({'Am0': round(morning) if morning is not None else round(Am), 'AmSrc': 'visitors',
             'Am0Src': 'snapshot' if morning is not None else 'recon',
-            'Amorning': round(forecast([r for r in vis if reserved_at(r) < x.day0], avg, d))}
+            'Amorning': round(forecast([r for r in vis if reserved_at(r) < x.cut], avg, d))}
            if d >= config.MORNING_VISITORS_FROM else {}),
         'sameSrc': 'snapshot' if snap is not None else 'memo',
     }
@@ -430,7 +432,7 @@ def base_stats(raw, base_days, base_records):
             c['fill'][t] = round(sum(map(paid, nm)) / len(nm)) if nm else 0
         return c
     # 予約時点（0:00）系: reservations already booked when the day started — used for TODAY (the 0:00 forecast)
-    coef = coef_of(lambda x, r: reserved_at(r) < x.day0)
+    coef = coef_of(lambda x, r: reserved_at(r) < x.cut)
     # 当日全体系: every reservation of the day, same-day bookings included — used for the day's 補正ロジックの予想 (cal)
     coef_all = coef_of(lambda x, r: True)
     high = [r for x in X for r in x.visited if vtype(r) == '初診' and resv(r) > 60000 and paid(r) == 0]
@@ -508,10 +510,13 @@ def hpb_booked(rows):
     return {'rows': out, 'n': sum(r[1] for r in out), 'bookings': len(ids), 'resvSum': sum(resv(by_id[i]) for i in ids)}
 
 
-def today_record(raw, d, base, now_label='0:00時点'):
-    """TODAY: the forecast for D from the reservations known at run time (0:00 JST)."""
+def today_record(raw, d, base, now_label='0:00時点', cut=None):
+    """TODAY: the forecast for D from the reservations known at run time (0:00 JST). CUT (aware datetime, the 8:00
+    run): only the reservations booked before it (those booked while the data was fetched are left out)."""
     import re
     rows = raw.sched.get(d, [])
+    if cut is not None:
+        rows = [r for r in rows if reserved_at(r) is not None and reserved_at(r) < cut]
     pool = [r for r in rows if not excluded(r)]
     active = [r for r in pool if r['reservationStatus'] in config.ACTIVE]
     cancelled = [r for r in pool if r['reservationStatus'] in config.CANCELLED]

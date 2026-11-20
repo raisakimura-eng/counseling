@@ -1,6 +1,7 @@
 """Daily update of the sales dashboards on Netlify (run by the routine at 0:30 JST).
 
     python3 -I pipeline/sales/daily_sales.py [--only counselor|landing|nurse] [--no-deploy]
+    python3 -I pipeline/sales/daily_sales.py --morning [--no-deploy]    # 8:25: landing の予想を8:00時点の予約で確定
     python3 -I pipeline/sales/daily_sales.py --intraday [--no-deploy]   # 12/14/16/18/20時: landing の当日の来院実績だけ
 
 counselor (naa-counselor): download the live page -> fetch every month from KOS -> build up to
@@ -127,6 +128,23 @@ def landing_intraday(deploy, today=None):
         print('built and checked (not deployed):', os.path.join(w, 'new.html'))
 
 
+def landing_morning(deploy, today=None):
+    """朝の更新 (8:25 JST): today's forecast again from the reservations booked before 8:00 (landing/README.md)."""
+    w = os.path.join(BASE, 'landing')
+    code = run(sys.executable, '-I', os.path.join(HERE, 'landing', 'daily.py'), '--morning', *(['--today', today] if today else []),
+               env=dict(os.environ, WORK=w))
+    if code:
+        sys.exit('STOP landing (morning): nothing deployed')
+    if filecmp.cmp(os.path.join(w, 'new.html'), os.path.join(w, 'current.html'), shallow=False):
+        print('NOTHING TO DO landing (morning): the live page already has the 8:00 forecast; not deployed')
+        return
+    if deploy:
+        netlify.deploy('naaclinic', os.path.join(w, 'new.html'), '8:00時点の予約で予想を確定（朝の更新）', require_password=False)
+        print('DONE landing (morning): https://naaclinic.netlify.app')
+    else:
+        print('built and checked (not deployed):', os.path.join(w, 'new.html'))
+
+
 def landing_restate_nomenu(deploy, today=None):
     """Once: restate naaclinic's days from 11/1 and today's forecast to メニュー未入力 = 0円 (no day is closed)."""
     w = os.path.join(BASE, 'landing')
@@ -145,6 +163,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--only', choices=['counselor', 'landing', 'nurse'])
     ap.add_argument('--no-deploy', action='store_true')
+    ap.add_argument('--morning', action='store_true', help='朝の更新 of landing only (8:25): today\'s forecast from the 8:00 reservations')
     ap.add_argument('--intraday', action='store_true', help='日中の更新 of landing only (12/14/16/18/20時); counselor is not run')
     ap.add_argument('--today', help='landing, for tests: JST date to treat as today (the 0:30 run makes the forecast for it)')
     ap.add_argument('--summary', help='landing: summary_todo.json with the 月まとめ sentences written (after exit 4)')
@@ -156,6 +175,8 @@ def main():
     os.umask(0o077)
     if a.intraday:
         return landing_intraday(not a.no_deploy, a.today)
+    if a.morning:
+        return landing_morning(not a.no_deploy, a.today)
     if a.restate_nomenu:
         return landing_restate_nomenu(not a.no_deploy, a.today)
     for name in ([a.only] if a.only else ENABLED):

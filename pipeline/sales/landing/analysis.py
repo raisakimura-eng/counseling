@@ -114,7 +114,7 @@ def analyse(raw, consts, day, work, targets, n_past=6):
                       '予約になかった施術': added, '決済額': paid(r), '差': paid(r) - resv(r),
                       'プリペイド購入': buyers.get(r['visitorId'], 0)})
     item1 = {'朝の予想': rec['Amorning'],
-             '朝の予想の定義': '0:00時点の予約のうち来院した方（当日キャンセルを除く）' if rec['AmSrc'] == 'visitors' else '0:00時点の予約', '着地結果（来院ベース）': rec['C'], '着地結果（決済ベース）': payC,
+             '朝の予想の定義': f'{config.morning_label(day)}時点の予約のうち来院した方（当日キャンセルを除く）' if rec['AmSrc'] == 'visitors' else f'{config.morning_label(day)}時点の予約', '着地結果（来院ベース）': rec['C'], '着地結果（決済ベース）': payC,
              '差（来院ベース − 朝の予想）': rec['C'] - rec['Amorning'],
              '差（決済ベース − 朝の予想）': payC - rec['Amorning'] if payC is not None else None,
              '寄与額（大きい順）': sorted(([k, v] for k, v in contrib.items() if v), key=lambda kv: -abs(kv[1])),
@@ -123,7 +123,7 @@ def analyse(raw, consts, day, work, targets, n_past=6):
              '目立ったケース': cases}
     # 2. 当日キャンセル
     item2 = {'当日キャンセル': rec['sameN'], '来院予定': rec['bookN'], '当日キャンセル率': round(rec['sameN'] / rec['bookN'], 3) if rec['bookN'] else None,
-             '判定方法': '0:00時点の予約一覧との差' if rec.get('sameSrc') == 'snapshot' else '予約状態と予約メモ（0:00の記録なし）',
+             '判定方法': f'{config.morning_label(day)}時点の予約一覧との差' if rec.get('sameSrc') == 'snapshot' else f'予約状態と予約メモ（{config.morning_label(day)}の記録なし）',
              'うちノーショー': sum(1 for s in rec['same'] if s['noshow']),
              '前日・それ以前のキャンセル': rec['prevN'] + rec['oldN'], '時期不明のキャンセル': rec['unkN']}
     # 3. 2施術以上の割合

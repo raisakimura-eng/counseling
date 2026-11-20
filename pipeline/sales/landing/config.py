@@ -38,6 +38,31 @@ MORNING_VISITORS_FROM = __import__('datetime').date(2026, 11, 1)
 NOMENU_ZERO_FROM = __import__('datetime').date(2026, 11, 1)
 
 
+# From 2026-11-21 (owner's decision 2026-11-20) the forecast of a day is made final at 8:00 JST: the 0:30 run still
+# closes yesterday and publishes a provisional forecast from the 0:00 reservations, and the 8:25 run (daily.py
+# --morning) makes it again from the reservations booked before 8:00 (KOS statistics lag ~20 min). That 8:00 list is
+# the snapshot for 当日キャンセル, the 朝の予想 a closed day is compared with is the 8:00 reservations that came, and
+# 当日予約 are the reservations booked after 8:00. Days before MORNING_CUT_FROM keep 0:00.
+MORNING_CUT_FROM = __import__('datetime').date(2026, 11, 21)
+MORNING_CUT_HOUR = 8
+
+
+def morning_hour(d):
+    """Hour (JST) of the reservation list the forecast of visit day D is final at: 8 from MORNING_CUT_FROM, else 0."""
+    return MORNING_CUT_HOUR if d >= MORNING_CUT_FROM else 0
+
+
+def morning_cut(d):
+    """Aware datetime (JST) of the reservation list the forecast of visit day D is made from."""
+    import datetime as dt_
+    return dt_.datetime.combine(d, dt_.time(morning_hour(d)), dt_.timezone(dt_.timedelta(hours=9)))
+
+
+def morning_label(d):
+    """'8:00' / '0:00' — the time of the forecast of visit day D, as the page writes it."""
+    return f'{morning_hour(d)}:00'
+
+
 def nomenu_zero(d):
     """True when the forecast for visit day D counts メニュー未入力 as 0円."""
     return d >= NOMENU_ZERO_FROM

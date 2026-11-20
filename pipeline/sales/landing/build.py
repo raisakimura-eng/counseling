@@ -153,7 +153,8 @@ def nomenu_note(mon):
     return f'メニュー未入力は{prev.month}/{prev.day}までは補完、{z.month}/{z.day}からは0円で見込み'
 
 
-def gen_texts(consts, base_days_n, today):
+def gen_texts(consts, base_days_n, today, at='0:00'):
+    """AT: the time of the reservation list TODAY's forecast was made from ('0:00' at 0:30, '8:00' after daily.py --morning)."""
     mon = consts['MON']
     b, c = mon['b'], mon['c']
     cur = consts['DAYS_CUR']
@@ -164,9 +165,13 @@ def gen_texts(consts, base_days_n, today):
     parts = []
     if snap:
         parts.append(f'{snap[0]}〜{snap[-1]}は実際に朝お出しした予想' if len(snap) > 1 else f'{snap[0]}は実際に朝お出しした予想')
-    if vis:
+    by_at = {}
+    for d in cur:
+        if d['AmSrc'] == 'visitors':
+            by_at.setdefault(config.morning_label(label_date(d['date'], mon['y'])), []).append(d['date'])
+    for h, vis in sorted(by_at.items(), key=lambda kv: label_date(kv[1][0], mon['y'])):
         parts.append(f'{vis[0]}〜{vis[-1]}' if len(vis) > 1 else vis[0])
-        parts[-1] += 'は0:00時点の予約のうち実際に来院した方の予想（当日キャンセルを除く）'
+        parts[-1] += f'は{h}時点の予約のうち実際に来院した方の予想（当日キャンセルを除く）'
     if recon:
         parts.append(f'{recon[0]}〜{recon[-1]}は予約登録日から朝の時点の予約を再現しています' if len(recon) > 1 else f'{recon[0]}は予約登録日から朝の時点の予約を再現しています')
     g = consts['TARGET']
@@ -181,14 +186,19 @@ def gen_texts(consts, base_days_n, today):
         'fixMult': f"初診 {ca['upsell']['初診']}、再診 {ca['upsell']['再診']}",
         'fixMultNote': f'メニュー入力済みの来院者の{b}月平均です。',
         **({'fixHigh': f"（{b}月は{ca['high'][0]}件、計{ca['high'][1]:,}円が決済0円）"} if ca.get('high') else {}),
-        'footPast': (f'データ：KOS OpenAPI（予約・決済・購入・施術・プリペイドの統計）から自動で集計しています（{today.month}/{today.day} 0:00更新）。'
+        'footPast': (f'データ：KOS OpenAPI（予約・決済・購入・施術・プリペイドの統計）から自動で集計しています（{today.month}/{today.day} {at}更新）。'
                      f'スタッフ（患者カテゴリ「NaA+HPMS」）と、インフルエンサー・PR枠（カテゴリ「インフルエンサー」ほか）の来院は、予想・客単価などの分析から除いています'
                      + (f'（{c}月：スタッフ{ex.get("staff", [0, 0])[0]}件・決済{ex.get("staff", [0, 0])[1]:,}円、インフルエンサー・PR{ex.get("influencer", [0, 0])[0]}件・決済{ex.get("influencer", [0, 0])[1]:,}円）' if ex else '')
                      + '。ただし、これらの来院で実際に支払われた金額（自費分）は着地結果（来院ベース）に含めています。売上目標の進捗は、これらを含むクリニック全体の決済額で計算しています。'
-                     '予約時点の予想は、毎日0:00時点の予約から出した予想です（それより前の日は予約登録日から再現）。当日キャンセルは、0:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです（0:00時点の記録がない日は、予約状態「ノーショー」と予約メモの記載から判定）。'
-                     '同じ日の別時間への振替は来院として数えています。売れた施術は施術実施額（施術チケット決済金額）で集計し、診察・麻酔・指名料は除いています。患者名は表示していません。'),
+                     + (f'予約時点の予想は、毎日8:00時点の予約から出した予想です（0:30に0:00時点の予約で仮の予想を出し、8:00時点の予約で確定します。'
+                        f'{dlabel(config.MORNING_CUT_FROM - dt.timedelta(days=1))}までは0:00時点、それより前の日は予約登録日から再現）。'
+                        '当日キャンセルは、8:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです'
+                        f'（{dlabel(config.MORNING_CUT_FROM - dt.timedelta(days=1))}までは0:00時点。記録がない日は、予約状態「ノーショー」と予約メモの記載から判定）。'
+                        if today >= config.MORNING_CUT_FROM else
+                        '予約時点の予想は、毎日0:00時点の予約から出した予想です（それより前の日は予約登録日から再現）。当日キャンセルは、0:00時点で有効だった予約のうち、その日にキャンセル・ノーショーになったものです（0:00時点の記録がない日は、予約状態「ノーショー」と予約メモの記載から判定）。')
+                     + '同じ日の別時間への振替は来院として数えています。売れた施術は施術実施額（施術チケット決済金額）で集計し、診察・麻酔・指名料は除いています。患者名は表示していません。'),
         'footToday': ('データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
-                      f'KOS OpenAPI の予約データ（{today.month}/{today.day} 0:00時点）。来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。'),
+                      f'KOS OpenAPI の予約データ（{today.month}/{today.day} {at}時点）。来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。'),
     }
 
 
@@ -341,7 +351,7 @@ def restate_nomenu(raw, rec, d, coef_all):
     rec['wfnotes'][2] = f'未入力{n}件（予想は0円）'
     x = aggregate.Day(raw, d)
     vis = x.visited
-    rec['Amorning'] = round(aggregate.forecast([r for r in vis if reserved_at(r) < x.day0], 0, d))
+    rec['Amorning'] = round(aggregate.forecast([r for r in vis if reserved_at(r) < x.cut], 0, d))
     rec['Aold'] = round(aggregate.forecast(x.full, 0, d))
     if rec.get('cal') is not None:
         fill = coef_all['fill']
@@ -539,7 +549,7 @@ def intraday(html, raw, today, now, as_of=None):
     kinds = [len({t.get('productTitle') for t in tasks.get(r['visitorId'], [])}) for r in payers_]
     buys = [e for e in raw.prepaid.get(today, []) if e.get('chargingAmountType') == 'BALANCE' and e['chargingType'] == 'CHARGE']
     hp = aggregate.hpb_sold(raw, today, cut)
-    live = {'asof': f'{cut}時点のデータ', 'cut': cut, 'noTime': False, 'basisLabel': '0:00時点',
+    live = {'asof': f'{cut}時点のデータ', 'cut': cut, 'noTime': False, 'basisLabel': T.get('asof') or '0:00時点',
             'paid': pay, 'paidVisit': vbase + ex_paid, 'vis': len(visited),
             'aov': round(vbase / len(visited)) if visited else 0,
             'fut': {'n': len(future), 'T': {t: sum(1 for r in future if vtype(r) == t) for t in ('初診', '再診')},
@@ -554,7 +564,7 @@ def intraday(html, raw, today, now, as_of=None):
     now = cut
     out = page.set_consts(html, {'TODAY': T2})
     foot = (f'データ：着地結果・客単価・要因の分析は、スタッフとインフルエンサー・PR枠の来院を除いた数字です。売上目標の進捗は、全体の決済額で計算しています。'
-            f'KOS OpenAPI の予約データ（{today.month}/{today.day} 0:00時点。現時点の決済・来院済みの件数は{now}時点のデータ）。'
+            f'KOS OpenAPI の予約データ（{today.month}/{today.day} {T.get("asof") or "0:00時点"}。現時点の決済・来院済みの件数は{now}時点のデータ）。'
             f'来院予定は、予約・来院・完了の予約（同じ日の振替は1件として数える）です。患者名は表示していません。')
     out = page.set_gen(out, {'footToday': foot})
     # guard: nothing but the result fields may have changed
@@ -569,6 +579,58 @@ def intraday(html, raw, today, now, as_of=None):
     return out, T, T2
 
 
+def morning(html, raw, today):
+    """朝の更新（8:25 JST、config.MORNING_CUT_FROM から）: make today's forecast again from the reservations booked
+    before 8:00 (config.morning_cut) and keep them as the snapshot for 当日キャンセル. Changed: TODAY (forecast,
+    reservations, snapshot), TARGET's 本日 row and morning entry, the 「…時点」 of the footers. Nothing else:
+    the closed days, coefficients and the month stay as the 0:30 run made them. Returns None when TODAY is already
+    the 8:00 forecast."""
+    html = page.migrate_nomenu_zero(page.migrate_norate(page.migrate_live(html)))
+    consts = page.get_consts(html)
+    T0 = consts['TODAY']
+    if T0['date'] != dlabel(today):
+        raise SystemExit(f"STOP: the page shows {T0['date']}, not {dlabel(today)}; the 0:30 run has to make today's forecast first")
+    if today < config.MORNING_CUT_FROM:
+        raise SystemExit(f'STOP: the 8:00 forecast starts on {config.MORNING_CUT_FROM} (config.MORNING_CUT_FROM)')
+    at = config.morning_label(today)
+    if T0.get('asof') == f'{at}時点':
+        return None
+    if T0.get('live') or T0.get('final'):
+        raise SystemExit("STOP: today's results are already on the page (日中の更新); not changing the forecast now")
+    rows = raw.sched.get(today, [])
+    ids = {r['scheduleId'][:8] for r in rows}
+    snap0 = set(T0.get('snap') or [])
+    if not rows or len(snap0 & ids) < len(snap0) * 0.9:
+        raise SystemExit(f'STOP: only {len(snap0 & ids)} of the {len(snap0)} reservations of the 0:00 snapshot are in the KOS data')
+    T = aggregate.today_record(raw, today, base_from_page(consts), now_label=f'{at}時点', cut=config.morning_cut(today))
+    T['coefAll'] = T0['coefAll']
+    T = {**{k: v for k, v in T0.items() if k not in T}, **T}
+    G = consts['TARGET']
+    for r in G['rows']:
+        if r[3] == 'today':
+            r[2] = T['cur']
+    G['morning'][dlabel(today)] = T['cur']
+    out = page.set_consts(html, {'TODAY': T, 'TARGET': G})
+    md = f'{today.month}/{today.day}'
+    out = out.replace(f'（{md} 0:00更新）', f'（{md} {at}更新）').replace(f'（{md} 0:00時点）', f'（{md} {at}時点）')
+    # guard: nothing but TODAY and TARGET's today entries may have changed
+    c2 = page.get_consts(out)
+    old = page.get_consts(html)
+    for k in old:
+        if k == 'TODAY':
+            continue
+        if k == 'TARGET':
+            a_, b_ = json.loads(json.dumps(old[k])), json.loads(json.dumps(c2[k]))
+            for g in (a_, b_):
+                g['rows'] = [r for r in g['rows'] if r[3] != 'today']
+                g['morning'].pop(dlabel(today), None)
+            if a_ != b_:
+                raise SystemExit('STOP: the 8:00 update would change TARGET beyond today')
+        elif old[k] != c2[k]:
+            raise SystemExit(f'STOP: the 8:00 update would change {k}')
+    return out, T0, T
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--html', required=True)
@@ -581,6 +643,7 @@ def main():
     ap.add_argument('--intraday', action='store_true', help='日中の更新: refresh only the results of today (see intraday())')
     ap.add_argument('--repair-day', nargs='+', metavar='M/D', help='修理: rebuild the 施術・購入-based items of these closed days from the API')
     ap.add_argument('--as-of', metavar='HH:MM', help='with --intraday: replay this time of a finished day (data fetched with --until)')
+    ap.add_argument('--morning', action='store_true', help='朝の更新 (8:25): make today\'s forecast again from the reservations booked before 8:00')
     ap.add_argument('--restate-nomenu', action='store_true', help='restate the published days from config.NOMENU_ZERO_FROM and '
                     "today's forecast to メニュー未入力 = 0円 (no day is closed)")
     a = ap.parse_args()
@@ -598,6 +661,17 @@ def main():
         out, done, c = restate_nomenu_page(html, Raw(a.work), today)
         open(a.out, 'w', encoding='utf-8').write(out)
         print(f"restated (メニュー未入力 = 0円): {', '.join(done) or 'nothing'}; 本日{c['TODAY']['date']}の予想 {c['TODAY']['cur']:,}円")
+        return
+    if a.morning:
+        res = morning(html, Raw(a.work), today)
+        if res is None:
+            open(a.out, 'w', encoding='utf-8').write(html)
+            print(f'NOTHING TO DO: the page already shows the {config.morning_label(today)} forecast for {today}')
+            return
+        out, T0, T = res
+        open(a.out, 'w', encoding='utf-8').write(out)
+        print(f"built {a.out} (morning, {T['asof']}): {T['date']}の予想 {T0['cur']:,}円 → {T['cur']:,}円, "
+              f"予約 {T0['active']}→{T['active']}件（キャンセル済み {T0['cancN']}→{T['cancN']}件）")
         return
     if a.intraday:
         now = dt.datetime.now(JST).strftime('%H:%M')
